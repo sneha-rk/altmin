@@ -1,0 +1,273 @@
+require 'torch'
+require 'dataset-mnist'
+require 'nn'
+require 'image'
+require 'os'
+require 'gnuplot'
+signal = require('posix.signal')
+
+opt = 
+{
+	epochs = 500,
+	batch_size = 50,
+	print_every = 250,  
+	train_size = 60000,
+	test_size = 1000,
+	-- Learning Rate eta = eps/kappa. kappa = exp(W), where ||w*|| < W Let eps = 1e-2; W ~ 10?
+	epsilon = 1e-1,
+	w = 8, --Recheck. This slows stuff down!
+}
+
+--Our major problem!
+opt.learningRate = opt.epsilon * torch.exp(-opt.w)
+print(opt)
+
+dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_w'..opt.w
+os.execute('mkdir '..dir_name)
+
+function map(func, array)
+	local new_array = {}
+	for i,v in ipairs(array) do
+		new_array[i] = func(v)
+	end
+	return new_array
+end
+
+function plot(params, fname, xlabel, ylabel, title)
+	gnuplot.pngfigure(fname)
+	gnuplot.plot(params)
+	gnuplot.xlabel(xlabel)
+	gnuplot.ylabel(ylabel)
+	gnuplot.title(title)
+	gnuplot.plotflush()
+end
+
+function load_dataset(train_or_test, count)
+	-- load
+	local data
+	if train_or_test == 'train' then
+		data = mnist.loadTrainSet(count, {32, 32})
+	else
+		data = mnist.loadTestSet(count, {32, 32})
+	end
+
+	-- vectorize each 2D data point into 1D
+	data.data = data.data:reshape(data.data:size(1), 32*32)
+	data.data = data.data/255
+
+	print('--------------------------------')
+	print(' loaded dataset "' .. train_or_test .. '"')
+	print('inputs', data.data:size())
+	print('targets', data.labels:size())
+	print('--------------------------------')	
+	return data.data, data.labels
+end
+
+function test(ds, encoder, decoder, criterion, iter)
+	local t = encoder:forward(ds)
+	t = decoder:forward(t)
+	local loss = {}
+	for i = 1, ds:size()[1] do
+		loss[#loss + 1] = criterion:forward(t[i], ds[i])
+	end
+	loss = - 1 * torch.DoubleTensor(loss)
+	local best10, indices = loss:topk(10)
+	local idxFile = string.format(dir_name.."/expt_top10Indices_epoch%d.dat", iter)
+	local labels = {}
+	torch.save(idxFile, indices)
+	for i = 1, 10 do 
+		labels[i] = testLabels[indices[i]]
+		local x = t[indices[i]]
+		x = x:reshape(32,32)
+		local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i], i, iter)
+		image.save(fileName, x)
+	end
+	local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
+	torch.save(labelFile, torch.ByteTensor(labels))
+	return t, -1 * loss
+end
+
+function trainOneLayer(opt, ds, ans, model, conjugateModel, criterion)
+	train_losses = {}
+	for i = 1, opt.epochs do
+		print('----- EPOCH ', i, '-----')
+		local shuffled_indices =  torch.randperm(opt.train_size, 'torch.LongTensor')
+		ds = ds:index(1, shuffled_indices):squeeze()
+		ans = ans:index(1, shuffled_indices):squeeze()
+		local cur = 1
+		local j = 0
+		while cur < opt.train_size do
+			local cur_ds = ds[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
+			local cur_ans = ans[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
+			cur = cur + opt.batch_size
+			j = j + 1
+			
+			--get parameters
+			local mParams, mGrads = model:getParameters()
+			mGrads:zero()
+
+			local outputs = model:forward(cur_ds)
+			local outputs_conj = conjugateModel:forward(outputs)
+			local loss = criterion:forward(outputs_conj, cur_ans)
+			
+			if j % opt.print_every == 0 then
+			   print(string.format("Iteration %d, loss %1.6f", j, loss))
+			end
+			
+			local dloss_doutput = criterion:backward(outputs_conj, cur_ans)
+			local gradInputConj = conjugateModel:updateGradInput(outputs, dloss_doutput)
+			local grad = model:backward(cur_ans, gradInputConj)
+			
+			if grad:norm(2) < 1e-7 then
+			   break
+			end
+			model.gradInput = grad/torch.sqrt(grad:norm(2))
+			model:updateParameters(opt.learningRate)
+			
+			train_losses[#train_losses + 1] = loss -- append the new loss
+		end
+	end
+	return model, conjugateModel, torch.DoubleTensor(train_losses)
+end
+
+function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
+	local encoder_train_loss = {}
+	local decoder_train_loss = {}
+	local test_losses = {}
+	local iter = 1
+	signal.signal(signal.SIGINT,function(signum)
+									print("Ctrl-C interrupt in alternateMin! Exiting...")
+									enc = encoder
+									dec = decoder
+									enc_tr_loss = encoder_train_loss
+									dec_tr_loss = decoder_train_loss
+									test_loss = test_losses
+									saveAll()
+									os.exit(128 + signum)
+								end)
+	while true do --Figure out a stopping condition
+		print("----- Encoder -----")
+		local loss = {}
+		encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion)
+		encoder_train_loss[#encoder_train_loss + 1] = loss
+		
+		--Simple stopping criterion. Loss smaller than some small number. Can be more sophisticated!
+                local tmp = encoder_train_loss[#encoder_train_loss]
+                if tmp[#tmp] < opt.epsilon then
+                        break
+                end
+
+		--Also, can we train the encoder and decoder on different subsets of the ds?
+		ops = encoder:forward(trainDs)
+		ops = decoder:forward(ops)
+
+		print("----- Flipping Network -----")
+		flippedEnc = nn.Sequential()
+		flippedEnc:add(nn.Linear(inputSize,outputSize))
+		flippedEnc:add(nn.Sigmoid())
+		flippedEnc.modules[1].weight:copy(decoder.modules[1].weight:t())
+
+		flippedDec = nn.Sequential()
+		flippedDec:add(nn.Linear(outputSize, inputSize))
+		flippedDec:add(nn.Sigmoid())
+		flippedDec.modules[1].weight:copy(encoder.modules[1].weight:t())
+
+
+		print("----- Decoder -----")
+		flippedEnc, flippedDec, loss = trainOneLayer(opt, ops, trainDs, flippedEnc, flippedDec, criterion)
+		decoder_train_loss[#decoder_train_loss + 1] = loss
+
+		encoder.modules[1].weight:copy(flippedDec.modules[1].weight:t())
+		decoder.modules[1].weight:copy(flippedEnc.modules[1].weight:t())
+
+		--Test
+		local t, test_loss = test(testDs, encoder, decoder, criterion, iter)
+		test_losses[#test_losses + 1] = test_loss:sum()
+
+		print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
+		iter = iter + 1		
+	end
+	return encoder, decoder, encoder_train_loss, decoder_train_loss, test_losses
+end
+
+function saveAll()
+	print('Saving everything...')
+	torch.save(dir_name..'/encoder_weights.dat', enc.modules[1].weight)
+	torch.save(dir_name..'/decoder_weights.dat', dec.modules[1].weight)
+	torch.save(dir_name..'/enc_loss.dat', enc_tr_loss)
+	torch.save(dir_name..'/dec_loss.dat', dec_tr_loss)
+	torch.save(dir_name..'/test_loss.dat', test_loss)
+
+	if #enc_tr_loss < 1 or #dec_tr_loss < 1 or #test_loss < 1 then
+		os.exit(-1)
+	end
+
+	mean_enc_loss = {'Mean Epochal Encoder Loss',
+		torch.range(1, #enc_tr_loss),
+		torch.Tensor(map(torch.mean, enc_tr_loss)),           
+		'-'}
+	min_enc_loss = {'Minimum Epochal Encoder Loss',
+		torch.range(1, #enc_tr_loss),
+		torch.Tensor(map(torch.min, enc_tr_loss)),           
+		'-'}
+	max_enc_loss = {'Maximum Epochal Encoder Loss',
+		torch.range(1, #enc_tr_loss),
+		torch.Tensor(map(torch.max, enc_tr_loss)),           
+		'-'}
+
+
+	mean_dec_loss = {'Mean Epochal Decoder Loss',
+		torch.range(1, #dec_tr_loss),
+		torch.Tensor(map(torch.mean, dec_tr_loss)),          
+		'-'}
+	min_dec_loss = {'Minimum Epochal Decoder Loss',
+		torch.range(1, #dec_tr_loss),
+		torch.Tensor(map(torch.min, dec_tr_loss)),           
+		'-'}
+	max_dec_loss = {'Maximum Epochal Decoder Loss',
+		torch.range(1, #dec_tr_loss),
+		torch.Tensor(map(torch.max, dec_tr_loss)),          
+		'-'}
+
+	tst_loss = {'Test Loss',
+		torch.range(1, #test_loss),
+		torch.Tensor(test_loss),
+		'-'}
+
+	--Plot 
+	plot(mean_enc_loss, dir_name..'/Mean_Encoder_Loss.png', 'Epochs', 'Loss', 'Encoder Training Mean Loss Plot')
+	plot(min_enc_loss, dir_name..'/Min_Encoder_Loss.png', 'Epochs', 'Loss', 'Encoder Training Minimum Loss Plot')
+	plot(max_enc_loss, dir_name..'/Max_Encoder_Loss.png', 'Epochs', 'Loss', 'Encoder Training Maximum Loss Plot')
+
+	plot(mean_dec_loss, dir_name..'/Mean_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Mean Loss Plot')
+	plot(min_dec_loss, dir_name..'/Min_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Minimum Loss Plot')
+	plot(max_dec_loss, dir_name..'/Max_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Maximum Loss Plot')
+
+	plot(tst_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
+end
+
+-- params
+inputSize = 32*32
+outputSize = 100
+
+-- encoder
+encoder = nn.Sequential()
+encoder:add(nn.Linear(inputSize,outputSize))
+encoder:add(nn.Sigmoid())
+
+-- decoder
+decoder = nn.Sequential()
+decoder:add(nn.Linear(outputSize,inputSize))
+decoder:add(nn.Sigmoid())
+
+crit = nn.MSECriterion()
+
+trainData = load_dataset('train', opt.train_size)
+testData, testLabels = load_dataset('test', opt.test_size)
+enc = nil
+dec = nil 
+enc_tr_loss = nil 
+dec_tr_loss = nil 
+test_loss = nil
+enc, dec, enc_tr_loss, dec_tr_loss, test_loss= alternateMin(opt, encoder, decoder, crit, trainData, testData)
+saveAll()
