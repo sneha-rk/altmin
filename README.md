@@ -15,6 +15,12 @@ This README would normally document whatever steps are necessary to get your app
 ### How To run ###
 	th train-autoencoder.lua
 
+### Contents ###
+1. mnist.t7 : Contains MNIST Dataset. Do not touch!
+2. train-autoencoder.lua - The code for training the autoencoder.
+3. control.lua - the control experiment - A standard torch autoencoder
+4. dataset-mnist.lua - Code to download and load the MNIST dataset.
+
 ### Who do I talk to? ###
 
 * Purushottam Kar
