@@ -22,8 +22,12 @@ opt =
 opt.learningRate = opt.epsilon * torch.exp(-opt.w)
 print(opt)
 
-dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_w'..opt.w
-os.execute('mkdir '..dir_name)
+if arg[1] then
+	dir_name = arg[1]
+else
+	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_w'..opt.w
+	os.execute('mkdir -p '..dir_name)
+end
 
 function map(func, array)
 	local new_array = {}
@@ -194,6 +198,30 @@ function saveAll()
 	print('Saving everything...')
 	torch.save(dir_name..'/encoder_weights.dat', enc.modules[1].weight)
 	torch.save(dir_name..'/decoder_weights.dat', dec.modules[1].weight)
+	
+	--Save old stuff as well!
+	if arg[1] then
+		local dn = dir_name..'/old_'..os.date('%B_')..os.date('%D'):sub(4,5)..'_'..os.date('%H%M')
+		local etr = torch.load(dir_name..'/enc_loss.dat')
+		local dtr = torch.load(dir_name..'/dec_loss.dat')
+		local tl  = torch.load(dir_name..'/test_loss.dat')
+		for i=1, #enc_tr_loss do
+			etr[#etr + 1] = enc_tr_loss[i]
+		end
+		enc_tr_loss = etr
+		for i=1, #dec_tr_loss do
+			dtr[#dtr + 1] = dec_tr_loss[i]
+		end
+		dec_tr_loss = dtr
+		for i=1, #tl do
+			tl[#tl + 1] = test_loss[i]
+		end
+		test_loss = tl
+		os.execute('mv '..dir_name..'/enc_loss.dat'..' '..dn)
+		os.execute('mv '..dir_name..'/dec_loss.dat'..' '..dn)
+		os.execute('mv '..dir_name..'/test_loss.dat'..' '..dn)
+	end
+
 	torch.save(dir_name..'/enc_loss.dat', enc_tr_loss)
 	torch.save(dir_name..'/dec_loss.dat', dec_tr_loss)
 	torch.save(dir_name..'/test_loss.dat', test_loss)
@@ -253,14 +281,32 @@ outputSize = 100
 -- encoder
 encoder = nn.Sequential()
 encoder:add(nn.Linear(inputSize,outputSize))
+if arg[1] then
+	wts = torch.load(dir_name..'/encoder_weights.dat')
+	encoder.modules[1].weights:copy(wts)
+end
 encoder:add(nn.Sigmoid())
 
 -- decoder
 decoder = nn.Sequential()
 decoder:add(nn.Linear(outputSize,inputSize))
+if arg[1] then
+	wts = torch.load(dir_name..'/decoder_weights.dat')
+	decoder.modules[1].weights:copy(wts)
+end
 decoder:add(nn.Sigmoid())
 
 crit = nn.MSECriterion()
+
+--Save old data
+if arg[1] then
+	dn = dir_name..'/old_'..os.date('%B_')..os.date('%D'):sub(4,5)..'_'..os.date('%H%M')
+	os.execute('mkdir -p '..dn)
+	os.execute('mv '..dir_name..'/*.png '..dn..'/')
+	os.execute('mv '..dir_name..'/*.jpeg '..dn..'/')
+	os.execute('mv '..dir_name..'/encoder_weights.dat '..dn..'/')
+	os.execute('mv '..dir_name..'/decoder_weights.dat '..dn..'/')
+end
 
 trainData = load_dataset('train', opt.train_size)
 testData, testLabels = load_dataset('test', opt.test_size)
