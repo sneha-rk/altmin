@@ -28,7 +28,7 @@ print(opt)
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_w'..opt.w
+	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
 
@@ -207,7 +207,7 @@ model = {}
 -- encoder
 for i = 1, opt.k + 1 do
 	layer = nn.Sequential()
-	layer:add(nn.Linear(sizes[i], sizes[i+1]))
+	layer:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
 	layer:add(nn.Sigmoid())
 	table.insert(model, layer)
 	print(layer)
