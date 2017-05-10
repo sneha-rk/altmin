@@ -141,36 +141,23 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 end
 
 function alternateMin(opt, model, criterion, trainDs, testDs)
-	local encoder_train_loss = {}
-	local decoder_train_loss = {}
+	local train_losses = {}
+	for i = 1, opt.k do
+		table.insert(train_losses, {})
+	end
 	local test_losses = {}
 	local iter = 1
-	signal.signal(signal.SIGINT,function(signum)
-									print("Ctrl-C interrupt in alternateMin! Exiting...")
-									enc = encoder
-									dec = decoder
-									enc_tr_loss = encoder_train_loss
-									dec_tr_loss = decoder_train_loss
-									test_loss = test_losses
-									saveAll()
-									os.exit(128 + signum)
-								end)
 	while true do --Figure out a stopping condition
-		-- print("----- Encoder -----")
-		local loss = {}
-		encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion,0)
-		encoder_train_loss[#encoder_train_loss + 1] = loss
-		
-		--Simple stopping criterion. Loss smaller than some small number. Can be more sophisticated!
-                local tmp = encoder_train_loss[#encoder_train_loss]
-                if tmp[#tmp] < 0.01 then
-                        break
-                end
-
-		-- print("----- Decoder -----")
-		encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, 1)
-		decoder_train_loss[#decoder_train_loss + 1] = loss
-
+		for i = 1, opt.k do
+			local loss = {}
+			model, loss = trainOneLayer(opt, trainDs, trainDs:clone(), model, criterion, i)
+			train_losses[i][#train_losses[i] + 1] = loss		
+			--Simple stopping criterion. Loss smaller than some small number. Can be more sophisticated!
+            local tmp = train_losses[i][#train_losses[i]]
+            if tmp[#tmp] < 0.01 then
+                    break
+            end
+        end
 		--Test
 		local t, test_loss = test(testDs, encoder, decoder, criterion, iter)
 		test_losses[#test_losses + 1] = test_loss:sum()
@@ -179,137 +166,59 @@ function alternateMin(opt, model, criterion, trainDs, testDs)
 		print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
 		iter = iter + 1		
 	end
-	return encoder, decoder, encoder_train_loss, decoder_train_loss, test_losses
+	return model, train_losses, test_losses
 end
 
 function saveAll()
 	print('Saving everything...')
-	torch.save(dir_name..'/encoder_weights.dat', enc.modules[1].weight)
-	torch.save(dir_name..'/decoder_weights.dat', dec.modules[1].weight)
-	
-	--Save old stuff as well!
-	if arg[1] then
-		local dn = dir_name..'/old_'..os.date('%B_')..os.date('%D'):sub(4,5)..'_'..os.date('%H%M')
-		local etr = torch.load(dir_name..'/enc_loss.dat')
-		local dtr = torch.load(dir_name..'/dec_loss.dat')
-		local tl  = torch.load(dir_name..'/test_loss.dat')
-		for i=1, #enc_tr_loss do
-			etr[#etr + 1] = enc_tr_loss[i]
-		end
-		enc_tr_loss = etr
-		for i=1, #dec_tr_loss do
-			dtr[#dtr + 1] = dec_tr_loss[i]
-		end
-		dec_tr_loss = dtr
-		for i=1, #tl do
-			tl[#tl + 1] = test_loss[i]
-		end
-		test_loss = tl
-		os.execute('mv '..dir_name..'/enc_loss.dat'..' '..dn)
-		os.execute('mv '..dir_name..'/dec_loss.dat'..' '..dn)
-		os.execute('mv '..dir_name..'/test_loss.dat'..' '..dn)
+	for i = 1, opt.k do
+		torch.save(dir_name..'/weights_'..i..'.dat', m.modules[i].weight)
 	end
-
-	torch.save(dir_name..'/enc_loss.dat', enc_tr_loss)
-	torch.save(dir_name..'/dec_loss.dat', dec_tr_loss)
 	torch.save(dir_name..'/test_loss.dat', test_loss)
 
-	if #enc_tr_loss < 1 or #dec_tr_loss < 1 or #test_loss < 1 then
-		os.exit(-1)
+	for i = 1, opt.k do
+		mean_loss = {'Mean Epochal Loss, Layer '..i,
+			torch.range(1, #train_losses), 
+			torch.Tensor(map(torch.mean, train_loss[i])),
+			'-'}
+		min_loss = {'Minimum Epochal Loss, Layer '..i,
+			torch.range(1, #train_losses), 
+			torch.Tensor(map(torch.min, train_loss[i])),
+			'-'}
+		max_loss = {'Maximum Epochal Loss, Layer '..i,
+			torch.range(1, #train_losses), 
+			torch.Tensor(map(torch.max, train_loss[i])),
+			'-'}
+		plot(mean_loss, dir_name..'/Mean_loss_layer_'..i..'.png', 'Epochs', 'Mean Loss', 'Layer '..i..'Mean Loss Plot')
+		plot(min_loss, dir_name..'/Minimum_loss_layer_'..i..'.png', 'Epochs', 'Minimum Loss', 'Layer '..i..'Minimum Loss Plot')
+		plot(max_loss, dir_name..'/Maximum_loss_layer_'..i..'.png', 'Epochs', 'Maximum Loss', 'Layer '..i..'Maximum Loss Plot')
 	end
-
-	mean_enc_loss = {'Mean Epochal Encoder Loss',
-		torch.range(1, #enc_tr_loss),
-		torch.Tensor(map(torch.mean, enc_tr_loss)),           
-		'-'}
-	min_enc_loss = {'Minimum Epochal Encoder Loss',
-		torch.range(1, #enc_tr_loss),
-		torch.Tensor(map(torch.min, enc_tr_loss)),           
-		'-'}
-	max_enc_loss = {'Maximum Epochal Encoder Loss',
-		torch.range(1, #enc_tr_loss),
-		torch.Tensor(map(torch.max, enc_tr_loss)),           
-		'-'}
-
-
-	mean_dec_loss = {'Mean Epochal Decoder Loss',
-		torch.range(1, #dec_tr_loss),
-		torch.Tensor(map(torch.mean, dec_tr_loss)),          
-		'-'}
-	min_dec_loss = {'Minimum Epochal Decoder Loss',
-		torch.range(1, #dec_tr_loss),
-		torch.Tensor(map(torch.min, dec_tr_loss)),           
-		'-'}
-	max_dec_loss = {'Maximum Epochal Decoder Loss',
-		torch.range(1, #dec_tr_loss),
-		torch.Tensor(map(torch.max, dec_tr_loss)),          
-		'-'}
 
 	tst_loss = {'Test Loss',
 		torch.range(1, #test_loss),
 		torch.Tensor(test_loss),
 		'-'}
 
-	--Plot 
-	plot(mean_enc_loss, dir_name..'/Mean_Encoder_Loss.png', 'Epochs', 'Loss', 'Encoder Training Mean Loss Plot')
-	plot(min_enc_loss, dir_name..'/Min_Encoder_Loss.png', 'Epochs', 'Loss', 'Encoder Training Minimum Loss Plot')
-	plot(max_enc_loss, dir_name..'/Max_Encoder_Loss.png', 'Epochs', 'Loss', 'Encoder Training Maximum Loss Plot')
-
-	plot(mean_dec_loss, dir_name..'/Mean_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Mean Loss Plot')
-	plot(min_dec_loss, dir_name..'/Min_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Minimum Loss Plot')
-	plot(max_dec_loss, dir_name..'/Max_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Maximum Loss Plot')
-
 	plot(tst_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
 end
 
--- params
-inputSize = 32*32
-outputSize = 100
-
+model = {}
 -- encoder
-encoder = nn.Sequential()
-encoder:add(nn.Linear(inputSize,outputSize))
-if arg[1] then
-	wts = torch.load(dir_name..'/encoder_weights.dat')
-	encoder.modules[1].weights = wts
+for i = 1, opt.k + 1 do
+	layer = nn.Sequential()
+	layer:add(nn.Linear(sizes[i], sizes[i+1]))
+	table.insert(model, layer)
+	print(layer)
 end
-encoder:add(nn.Sigmoid())
-
--- decoder
-decoder = nn.Sequential()
-decoder:add(nn.Linear(outputSize,inputSize))
-if arg[1] then
-	wts = torch.load(dir_name..'/decoder_weights.dat')
-	decoder.modules[1].weights = wts
-end
-decoder:add(nn.Sigmoid())
 
 crit = nn.MSECriterion()
 
---Save old data
-if arg[1] then
-	dn = dir_name..'/old_'..os.date('%B_')..os.date('%D'):sub(4,5)..'_'..os.date('%H%M')
-	os.execute('mkdir -p '..dn)
-	os.execute('mv '..dir_name..'/*.png '..dn..'/')
-	os.execute('mv '..dir_name..'/*.jpeg '..dn..'/')
-	os.execute('mv '..dir_name..'/encoder_weights.dat '..dn..'/')
-	os.execute('mv '..dir_name..'/decoder_weights.dat '..dn..'/')
-end
-
 trainData = load_dataset('train', opt.train_size)
 testData, testLabels = load_dataset('test', opt.test_size)
-enc = nil
-dec = nil 
-enc_tr_loss = nil 
-dec_tr_loss = nil 
-test_loss = nil
--- print(encoder.modules[1].weights)
--- print(decoder.modules[1].weights)
-enc, dec, enc_tr_loss, dec_tr_loss, test_loss= alternateMin(opt, encoder, decoder, crit, trainData, testData)
--- local t, test_loss = test(testData, encoder, decoder, crit, 0)
--- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
-
-
+m = nil
+tr_loss = nil
+tst_loss = nil
+m, tr_loss, tst_loss= alternateMin(opt, model, crit, trainData, testData)
 saveAll()
 
 
