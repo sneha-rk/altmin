@@ -72,7 +72,7 @@ end
 
 function test(ds, model, criterion, iter)
 	local t = ds
-	for i = 1, opt.k do
+	for i = 1, opt.k + 1 do
 		t = model[i]:forward(t)
 	end
 	local loss = {}
@@ -113,10 +113,11 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 			
 			--outputs[i+1] is the output of layer i
 			local outputs = {cur_ds} 
-			for i = 1, opt.k do
+			for i = 1, opt.k + 1 do
 				outputs[i+1] = model[i]:forward(outputs[i])
 			end
 
+			local output = outputs[opt.k + 2]
 			local loss = criterion:forward(output, cur_ans)
 
 			if j % opt.print_every == 0 then
@@ -124,7 +125,7 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 			end
 			
 			local grad = criterion:backward(output, cur_ans)
-			for i = opt.k, k, -1 do
+			for i = opt.k + 1, k, -1 do
 				grad = model[i]:backward(outputs[i+1], grad) 
 			end
 
@@ -142,7 +143,7 @@ end
 
 function alternateMin(opt, model, criterion, trainDs, testDs)
 	local train_losses = {}
-	for i = 1, opt.k do
+	for i = 1, opt.k + 1 do
 		table.insert(train_losses, {})
 	end
 	local test_losses = {}
@@ -169,25 +170,25 @@ function alternateMin(opt, model, criterion, trainDs, testDs)
 	return model, train_losses, test_losses
 end
 
-function saveAll()
+function saveAll(model, train_losses, test_losses)
 	print('Saving everything...')
-	for i = 1, opt.k do
-		torch.save(dir_name..'/weights_'..i..'.dat', m.modules[i].weight)
+	for i = 1, opt.k + 1 do
+		torch.save(dir_name..'/weights_'..i..'.dat', model[i].modules[1].weight)
 	end
-	torch.save(dir_name..'/test_loss.dat', test_loss)
+	torch.save(dir_name..'/test_loss.dat', test_losses)
 
 	for i = 1, opt.k do
 		mean_loss = {'Mean Epochal Loss, Layer '..i,
-			torch.range(1, #train_losses), 
-			torch.Tensor(map(torch.mean, train_loss[i])),
+			torch.range(1, #train_losses[i]), 
+			torch.Tensor(map(torch.mean, train_losses[i])),
 			'-'}
 		min_loss = {'Minimum Epochal Loss, Layer '..i,
-			torch.range(1, #train_losses), 
-			torch.Tensor(map(torch.min, train_loss[i])),
+			torch.range(1, #train_losses[i]), 
+			torch.Tensor(map(torch.min, train_losses[i])),
 			'-'}
 		max_loss = {'Maximum Epochal Loss, Layer '..i,
-			torch.range(1, #train_losses), 
-			torch.Tensor(map(torch.max, train_loss[i])),
+			torch.range(1, #train_losses[i]), 
+			torch.Tensor(map(torch.max, train_losses[i])),
 			'-'}
 		plot(mean_loss, dir_name..'/Mean_loss_layer_'..i..'.png', 'Epochs', 'Mean Loss', 'Layer '..i..'Mean Loss Plot')
 		plot(min_loss, dir_name..'/Minimum_loss_layer_'..i..'.png', 'Epochs', 'Minimum Loss', 'Layer '..i..'Minimum Loss Plot')
@@ -195,11 +196,11 @@ function saveAll()
 	end
 
 	tst_loss = {'Test Loss',
-		torch.range(1, #test_loss),
-		torch.Tensor(test_loss),
+		torch.range(1, #test_losses),
+		torch.Tensor(test_losses),
 		'-'}
 
-	plot(tst_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
+	plot(test_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
 end
 
 model = {}
@@ -207,6 +208,7 @@ model = {}
 for i = 1, opt.k + 1 do
 	layer = nn.Sequential()
 	layer:add(nn.Linear(sizes[i], sizes[i+1]))
+	layer:add(nn.Sigmoid())
 	table.insert(model, layer)
 	print(layer)
 end
@@ -219,6 +221,6 @@ m = nil
 tr_loss = nil
 tst_loss = nil
 m, tr_loss, tst_loss= alternateMin(opt, model, crit, trainData, testData)
-saveAll()
+saveAll(m, tr_loss, tst_loss)
 
 
