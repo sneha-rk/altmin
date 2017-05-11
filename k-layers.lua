@@ -8,12 +8,12 @@ signal = require('posix.signal')
 
 opt = 
 {
-	epochs = 2,
+	epochs = 1,
 	batch_size = 500,
-	print_every = 250,  
+	print_every = 10,  
 	train_size = 60000,
 	test_size = 1000,
-	learningRate = 1e-4,
+	learningRate = 1e-2,
 	epsilon = 1e-4,
 	k = 2, --Number of hidden layers
 	sizes = {1024, 100, 100, 1024} --Sizes of inputs in various layers.
@@ -70,7 +70,7 @@ function load_dataset(train_or_test, count)
 	return data.data, data.labels
 end
 
-function test(ds, model, criterion, iter)
+function test(ds, model, criterion, iter, flag)
 	local t = ds
 	for i = 1, opt.k + 1 do
 		t = model[i]:forward(t)
@@ -80,23 +80,25 @@ function test(ds, model, criterion, iter)
 		loss[#loss + 1] = criterion:forward(t[i], ds[i])
 	end
 	loss = - 1 * torch.DoubleTensor(loss)
-	local best10, indices = loss:topk(100)
-	local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
-	local labels = {}
-	torch.save(idxFile, indices)
-	for i = 1, 100 do 
-		labels[i] = testLabels[indices[i]]
-		local x = t[indices[i]]
-		x = x:reshape(32,32)
-		local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i] + 1, i, iter)
-		image.save(fileName, x)
+	if flag == 1 then
+		local best10, indices = loss:topk(100)
+		local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
+		local labels = {}
+		torch.save(idxFile, indices)
+		for i = 1, 100 do 
+			labels[i] = testLabels[indices[i]]
+			local x = t[indices[i]]
+			x = x:reshape(32,32)
+			local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i] + 1, i, iter)
+			image.save(fileName, x)
+		end
+		local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
+		torch.save(labelFile, torch.ByteTensor(labels))
 	end
-	local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
-	torch.save(labelFile, torch.ByteTensor(labels))
 	return t, -1 * loss
 end
 
-function trainOneLayer(opt, ds, ans, model, criterion, k)
+function trainOneLayer(opt, testDs, ds, ans, model, criterion, k, iter)
 	train_losses = {}
 	for i = 1, opt.epochs do
 		-- print('----- EPOCH ', i, '-----')
@@ -120,9 +122,9 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 			local output = outputs[opt.k + 2]
 			local loss = criterion:forward(output, cur_ans)
 			
-			if j % opt.print_every == 0 then
-			   print(string.format("Iteration %d, loss %1.6f", j, loss))
-			end
+			-- if j % opt.print_every == 0 then
+			--    print(string.format("Iteration %d, loss %1.6f", j, loss))
+			-- end
 			
 			local grad = criterion:backward(output, cur_ans)
 			for i = opt.k + 1, k, -1 do
@@ -135,6 +137,12 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 			
 			model[k].gradInput = grad/torch.sqrt(grad:norm(2))
 			model[k]:updateParameters(opt.learningRate)
+
+			if j % opt.print_every == 0 then
+			   local t, test_loss = test(testDs, model, criterion, (iter * opt.train_size / opt.batch_size) + j, 0)
+			   print(string.format("%d, %1.6f", (iter * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+			end
+
 			train_losses[#train_losses + 1] = loss -- append the new loss
 		end
 	end
@@ -147,11 +155,11 @@ function alternateMin(opt, model, criterion, trainDs, testDs)
 		table.insert(train_losses, {})
 	end
 	local test_losses = {}
-	local iter = 1
-	while true do --Figure out a stopping condition
+	local iter = 0
+	while iter < 200 do --Figure out a stopping condition
 		for i = 1, opt.k do
 			local loss = {}
-			model, loss = trainOneLayer(opt, trainDs, trainDs:clone(), model, criterion, i)
+			model, loss = trainOneLayer(opt,testDs, trainDs, trainDs:clone(), model, criterion, i, iter)
 			train_losses[i][#train_losses[i] + 1] = loss		
 			--Simple stopping criterion. Loss smaller than some small number. Can be more sophisticated!
             local tmp = train_losses[i][#train_losses[i]]
@@ -160,11 +168,11 @@ function alternateMin(opt, model, criterion, trainDs, testDs)
             end
         end
 		--Test
-		local t, test_loss = test(testDs, model, criterion, iter)
+		local t, test_loss = test(testDs, model, criterion, iter, 1)
 		test_losses[#test_losses + 1] = test_loss:sum()
 
 		-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
-		print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+		-- print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
 		iter = iter + 1		
 	end
 	return model, train_losses, test_losses
@@ -176,6 +184,7 @@ function saveAll(model, train_losses, test_losses)
 		torch.save(dir_name..'/weights_'..i..'.dat', model[i].modules[1].weight)
 	end
 	torch.save(dir_name..'/test_loss.dat', test_losses)
+	torch.save(dir_name..'/train_loss.dat', train_losses)
 
 	for i = 1, opt.k do
 		mean_loss = {'Mean Epochal Loss, Layer '..i,
@@ -208,7 +217,7 @@ model = {}
 for i = 1, opt.k + 1 do
 	layer = nn.Sequential()
 	layer:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
-	layer:add(nn.Sigmoid())
+	layer:add(nn.ReLU())
 	table.insert(model, layer)
 	print(layer)
 end
