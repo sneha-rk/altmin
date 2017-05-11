@@ -160,7 +160,7 @@ function alternateMin(opt, model, criterion, trainDs, testDs)
             end
         end
 		--Test
-		local t, test_loss = test(testDs, encoder, decoder, criterion, iter)
+		local t, test_loss = test(testDs, model, criterion, iter)
 		test_losses[#test_losses + 1] = test_loss:sum()
 
 		-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
