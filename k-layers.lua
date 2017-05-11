@@ -8,7 +8,7 @@ signal = require('posix.signal')
 
 opt = 
 {
-	epochs = 1,
+	epochs = 2,
 	batch_size = 500,
 	print_every = 10,  
 	train_size = 60000,
@@ -157,7 +157,7 @@ function alternateMin(opt, model, criterion, trainDs, testDs)
 	local test_losses = {}
 	local iter = 0
 	while iter < 200 do --Figure out a stopping condition
-		for i = 1, opt.k do
+		for i = 1, opt.k + 1 do
 			local loss = {}
 			model, loss = trainOneLayer(opt,testDs, trainDs, trainDs:clone(), model, criterion, i, iter)
 			train_losses[i][#train_losses[i] + 1] = loss		
