@@ -112,21 +112,21 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 			j = j + 1
 			
 			--outputs[i+1] is the output of layer i
-			local outputs = {cur_ds} 
+			local outputs = {cur_ds}
 			for i = 1, opt.k + 1 do
 				outputs[i+1] = model[i]:forward(outputs[i])
 			end
 
 			local output = outputs[opt.k + 2]
 			local loss = criterion:forward(output, cur_ans)
-
+			
 			if j % opt.print_every == 0 then
 			   print(string.format("Iteration %d, loss %1.6f", j, loss))
 			end
 			
 			local grad = criterion:backward(output, cur_ans)
 			for i = opt.k + 1, k, -1 do
-				grad = model[i]:backward(outputs[i+1], grad) 
+				grad = model[i]:backward(outputs[i], grad) 
 			end
 
 			if grad:norm(2) < 1e-7 then
@@ -134,7 +134,7 @@ function trainOneLayer(opt, ds, ans, model, criterion, k)
 			end
 			
 			model[k].gradInput = grad/torch.sqrt(grad:norm(2))
-			model:updateParameters(opt.learningRate)
+			model[k]:updateParameters(opt.learningRate)
 			train_losses[#train_losses + 1] = loss -- append the new loss
 		end
 	end
