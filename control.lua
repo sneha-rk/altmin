@@ -1,28 +1,78 @@
 require 'torch'
--- require 'unsup'
 require 'dataset-mnist'
+
 require 'nn'
 require 'image'
+require 'os'
+require 'gnuplot'
+signal = require('posix.signal')
+
+dataset = 'cifar'
+activation = 'relu'
+
 
 opt = 
 {
-	epochs = 2,
+	n_epochs = 200,
+	epochs = 1,
 	batch_size = 500,
-	print_every = 250,  
-	train_size = 60000,
-	test_size = 1000,
-	epsilon = 1e-4,
-	w = 0, --Recheck. This slows stuff down!
-	learningRate = 1e-1, --ToDo: Set Learning Rate
-}
 
-opt.learningRate = opt.epsilon * torch.exp(-opt.w)
+	print_every = 10,  
+	learningRate = 1e-3,
+	epsilon = 1e-4,
+
+	inputSize = 32*32,
+	outputSize = 500,	
+	sizes = {}, --Sizes of inputs in various layers.
+	
+	k = 1, --Number of hidden layers
+	train_size = 50000,
+	channels = 3,
+	test_size = 10000
+}	
+if not (assert(#opt.sizes == opt.k + 2, "opt.sizes must have size equal to opt.k + 2")) then
+	os.exit(-1)	
+end
+print(opt)
 
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = 'c'..os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_w'..opt.w
+	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
+end
+
+
+-- Loading appropriate dataset
+if dataset == 'cifar' then
+	print('Using CIFAR-10 Dataset...')
+	require 'dataset-cifar'
+
+	opt.train_size = 50000
+	opt.channels = 3
+	opt.sizes = {opt.inputSize * opt.channels, opt.outputSize, opt.inputSize * opt.channels}
+else	
+	opt.train_size = 60000
+	opt.channels = 1
+	opt.sizes = {opt.inputSize * opt.channels, opt.outputSize, opt.inputSize * opt.channels}
+end
+
+
+function map(func, array)
+	local new_array = {}
+	for i,v in ipairs(array) do
+		new_array[i] = func(v)
+	end
+	return new_array
+end
+
+function plot(params, fname, xlabel, ylabel, title)
+	gnuplot.pngfigure(fname)
+	gnuplot.plot(params)
+	gnuplot.xlabel(xlabel)
+	gnuplot.ylabel(ylabel)
+	gnuplot.title(title)
+	gnuplot.plotflush()
 end
 
 function load_dataset(train_or_test, count)
@@ -36,39 +86,57 @@ function load_dataset(train_or_test, count)
 
 	-- vectorize each 2D data point into 1D
 	data.data = data.data:reshape(data.data:size(1), 32*32)
-	data.data = data.data / 255
+	data.data = data.data/255.0
 
 	print('--------------------------------')
 	print(' loaded dataset "' .. train_or_test .. '"')
 	print('inputs', data.data:size())
 	print('targets', data.labels:size())
-	print('--------------------------------')
-	
-	return data.data
+	print('--------------------------------')	
+	return data.data, data.labels
 end
 
-function test(ds, encoder, decoder, criterion, iter)
+-- Loading appropriate dataset
+if dataset == 'cifar' then
+	trainData = cifar.trainData.data:reshape(cifar.trainData.data:size(1), 3*32*32) / 255.0
+	testData, testLabels = cifar.testData.data:reshape(cifar.testData.data:size(1), 3*32*32) / 255.0, cifar.testData.labels
+else	
+	trainData = load_dataset('train', opt.train_size)
+	testData, testLabels = load_dataset('test', opt.test_size)
+end
+
+function test(ds, encoder, decoder, criterion, iter, flag)
 	local t = encoder:forward(ds)
 	t = decoder:forward(t)
-	local err = {}
+	local loss = {}
 	for i = 1, ds:size()[1] do
-		err[#err + 1] = criterion:forward(t[i], ds[i])
+		loss[#loss + 1] = criterion:forward(t[i], ds[i])
 	end
-	err = - 1 * torch.DoubleTensor(err)
-	local best10, indices = err:topk(100)
-	for i = 1, 100 do 
-		local x = t[indices[i]] 
-		x = x:reshape(32,32)
-		local fileName = string.format(dir_name.."/control_top%d_iter%d.jpeg", i, iter)
-		-- print(x)
-		-- print(x:round())
-		image.save(fileName, x)
-	end
+	loss = - 1 * torch.DoubleTensor(loss)
+	if flag == 1 then
+		local best10, indices = loss:topk(100)
+		local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
+		local labels = {}
+		torch.save(idxFile, indices)
+		for i = 1, 100 do 
+			labels[i] = testLabels[indices[i]]
+			local x = t[indices[i]]
+			if dataset == 'cifar' then
+				x = x:reshape(3, 32,32)
+			else 
+				x = x:reshape(32,32)
+			end 
 
-	return t, err
+			local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i] + 1, i, iter)
+			image.save(fileName, x)
+		end
+		local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
+		torch.save(labelFile, torch.ByteTensor(labels))
+	end
+	return t, -1 * loss
 end
 
-function trainOneLayer(opt, ds, model, conjugateModel, criterion)
+function trainOneLayer(opt, ds, model, conjugateModel, criterion, testDs, iter)
 	train_losses = {}
 	for i = 1, opt.epochs do
 
@@ -80,7 +148,7 @@ function trainOneLayer(opt, ds, model, conjugateModel, criterion)
 		while cur < opt.train_size do
 			local cur_ds = ds[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
 			cur = cur + opt.batch_size
-		 	j = j + 1
+		 	
 			
 			--get parameters
 			local mParams, mGrads = model:getParameters()
@@ -99,8 +167,14 @@ function trainOneLayer(opt, ds, model, conjugateModel, criterion)
 			-- Update weights
 			model:updateParameters(opt.learningRate)
 			conjugateModel:updateParameters(opt.learningRate)
+
+			if j % opt.print_every == 0 then
+			   local t, test_loss = test(testDs, model, conjugateModel, criterion, (iter * opt.train_size / opt.batch_size) + j, 0)
+			   print(string.format("%d, %1.6f", (iter * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+			end
 			
 			train_losses[#train_losses + 1] = loss -- append the new loss
+			j = j + 1
 		end
 	end
 	return model, conjugateModel, train_losses
@@ -109,26 +183,14 @@ end
 function train(opt, encoder, decoder, criterion, trainDs, testDs)
 	local encoder_train_error = {}
 	local decoder_train_error = {}
-	local iter = 1
-	while true do --Figure out a stopping condition
+	local iter = 0
+	while iter < opt.n_epochs do --Figure out a stopping condition
 		-- print("----- Encoder -----")
-		encoder, decoder, tmp = trainOneLayer(opt, trainDs, encoder, decoder, criterion)
+		encoder, decoder, tmp = trainOneLayer(opt, trainDs, encoder, decoder, criterion, testDs, iter)
 		encoder_train_error[#encoder_train_error + 1] = tmp
 
-		--Test
-		local t, err = test(testDs, encoder, decoder, criterion, iter)
-
-		print(string.format("%d, %1.6f", iter, -1 * torch.mean(err)))
-		-- print(string.format("iteration %4d, test error = %1.6f", iter, -1 * torch.mean(err)))
 		iter = iter + 1
-		
-		--Simple stopping criterion. Loss smaller than some small number. Can be more sophisticated!
-		if  -1 * torch.mean(err) < 0.01 then
-			break
-		end
-		-- if iter > 500 then
-		-- 	break
-		-- end
+		local t, err = test(testDs, encoder, decoder, criterion, iter, 1)
 	end
 	return encoder, decoder, encoder_train_error, decoder_train_error
 end
@@ -191,23 +253,25 @@ function saveAll()
 	plot(tst_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
 end
 
--- Load data
-trainData = load_dataset('train', opt.train_size)
-testData = load_dataset('test', opt.test_size)
-
--- params
-inputSize = 32*32
-outputSize = 100
 
 -- encoder
 encoder = nn.Sequential()
-encoder:add(nn.Linear(inputSize,outputSize))
-encoder:add(nn.Sigmoid())
+encoder:add(nn.Linear(opt.channels * opt.inputSize,opt.outputSize))
+if activation == 'relu' then
+		encoder:add(nn.ReLU())
+else 
+	encoder:add(nn.Sigmoid())
+end
 
 -- decoder
 decoder = nn.Sequential()
-decoder:add(nn.Linear(outputSize,inputSize))
-decoder:add(nn.Sigmoid())
+decoder:add(nn.Linear(opt.outputSize,opt.channels * opt.inputSize))
+if activation == 'relu' then
+	decoder:add(nn.ReLU())
+else 
+	layer:add(nn.Sigmoid())
+end
+decoder:add(nn.ReLU())
 
 crit = nn.MSECriterion()
 
@@ -219,7 +283,5 @@ print('==> Constructed linear auto-encoder')
 enc, dec, enc_tr, dec_tr = train(opt, encoder, decoder, crit, trainData, testData)
 
 saveAll()
--- torch.save('encoder.dat', enc)
--- torch.save('decoder.dat', dec)
--- torch.save('en_err.dat', enc_tr)
--- torch.save('dec_err.dat', dec_tr)
+
+
