@@ -9,23 +9,23 @@ signal = require('posix.signal')
 opt = 
 {
 	epochs = 2,
-	batch_size = 500,
+	batch_size = 100,
 	print_every = 250,  
-	train_size = 60000,
-	test_size = 1000,
-	-- Learning Rate eta = eps/kappa. kappa = exp(W), where ||w*|| < W Let eps = 1e-2; W ~ 10?
+	train_size = 600,
+	test_size = 100,
 	epsilon = 1e-4,
-	k = 2, --Number of hidden layers is 2k - 3
-	sizes = {1024, 100} --Sizes of inputs in various layers.
+	sizes = {1024, 500, 100}, --Sizes of inputs in various layers.
 	learningRate = 1e-4 --SET PROPERLY
 }
+
+opt.k = #opt.sizes --Number of hidden layers is 2k - 3
 
 print(opt)
 
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_w'..opt.w
+	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
 
@@ -109,44 +109,42 @@ function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, flag)
 
 			local encoder_outputs = encoder:forward(cur_ds)
 			local decoder_outputs = decoder:forward(encoder_outputs)
-			local loss = criterion:forward(decoder_outputs)
+			local loss = criterion:forward(decoder_outputs, cur_ans)
 
 			if j % opt.print_every == 0 then
 			   print(string.format("Iteration %d, loss %1.6f", j, loss))
 			end
 
-			local dloss_doutput = criterion:backward(outputs_conj, cur_ans)
-			local encoder_grad_input = decoder:backward(outputs, dloss_doutput)
-			local grad = encoder:backward(cur_ans, encoder_grad_input)
-
+			local dloss_doutput = criterion:backward(decoder_outputs, cur_ans)
+			local encoder_grad_input = decoder:backward(encoder_outputs, dloss_doutput)
+			local grad = encoder:backward(cur_ds, encoder_grad_input)
+			
 			if flag then
-				local _, grad = encoder:getParameters()
-				curr_grad = grad[l]:copy()
-				if curr_grad:norm(2) < 1e-7 then
+				layer = encoder.modules[2*l - 1]
+				_, grad = layer:getParameters()
+				if grad:norm(2) < 1e-7 then
 					break
 				end
-				grad:zero()
-				grad[l] = curr_grad
-				print(l, grad)
-				encoder.gradInput = grad/torch.sqrt(grad:norm(2))
-				encoder:updateParameters(opt.learningRate)
+				layer.gradInput = grad / grad:norm(2)
+				layer:updateParameters(opt.learningRate)
 			else
-				l = opt.k + 1 - l
-				local _, grad = decoder:getParameters()
-				curr_grad = grad[l]:copy()
-				if curr_grad:norm(2) < 1e-7 then
+				l = opt.k - l
+				layer = decoder.modules[2*l - 1]
+				_, grad = layer:getParameters()
+				if grad:norm(2) < 1e-7 then
 					break
 				end
-				grad:zero()
-				grad[l] = curr_grad
-				print(l, grad)
-				decoder.gradInput = grad/torch.sqrt(grad:norm(2))
-				decoder:updateParameters(opt.learningRate)
+				layer.gradInput = grad / grad:norm(2)
+				layer:updateParameters(opt.learningRate)
 			end
+			
+			encoder:zeroGradParameters()
+			decoder:zeroGradParameters()
+			
 			train_losses[#train_losses + 1] = loss -- append the new loss
 		end
 	end
-	return model, conjugateModel, torch.DoubleTensor(train_losses)
+	return encoder, decoder, torch.DoubleTensor(train_losses)
 end
 
 function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
@@ -176,13 +174,15 @@ function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
 
 		local loss = {}
 
-		for l = 1, opt.k do
-			
+		for l = 1, opt.k - 1 do
+			print(l)
 			--Train Encoder			
+			print('Encoder')
 			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, true)
 			encoder_train_loss[#encoder_train_loss + 1] = loss
 			
 			--Train Decoder
+			print('Decoder')
 			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, false)
 			decoder_train_loss[#decoder_train_loss + 1] = loss
 		end
@@ -201,7 +201,7 @@ end
 
 function saveAll()
 	print('Saving everything...')
-	for i = 1, opt.k do
+	for i = 1, opt.k - 1 do
 		torch.save(dir_name..string.format('/encoder_weights_%d.dat', i), enc.modules[2*i - 1].weight)
 		torch.save(dir_name..string.format('/decoder_weights_%d.dat', i), dec.modules[2*i - 1].weight)
 	end
@@ -291,6 +291,8 @@ for i = 1, opt.k - 1 do
 		encoder.modules[2*i - 1].weights = wts
 	end
 end
+print(encoder)
+
 -- decoder
 decoder = nn.Sequential()
 
@@ -303,6 +305,7 @@ for i = opt.k , 2, -1 do
 		decoder.modules[2*j - 1].weights = wts
 	end
 end
+print(decoder)
 
 crit = nn.MSECriterion()
 
@@ -315,6 +318,7 @@ if arg[1] then
 	for i = 1, opt.k do
 		os.execute('mv '..dir_name..string.format('/encoder_weights_%d.dat ', i)..dn..'/')
 		os.execute('mv '..dir_name..string.format('/decoder_weights_%d.dat ', i)..dn..'/')
+	end
 end
 
 trainData = load_dataset('train', opt.train_size)
@@ -324,11 +328,8 @@ dec = nil
 enc_tr_loss = nil 
 dec_tr_loss = nil 
 test_loss = nil
--- print(encoder.modules[1].weights)
--- print(decoder.modules[1].weights)
+
 enc, dec, enc_tr_loss, dec_tr_loss, test_loss= alternateMin(opt, encoder, decoder, crit, trainData, testData)
--- local t, test_loss = test(testData, encoder, decoder, crit, 0)
--- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
 
 
 saveAll()
