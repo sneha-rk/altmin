@@ -331,7 +331,4 @@ test_loss = nil
 
 enc, dec, enc_tr_loss, dec_tr_loss, test_loss= alternateMin(opt, encoder, decoder, crit, trainData, testData)
 
-
 saveAll()
-
-
