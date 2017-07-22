@@ -73,7 +73,7 @@ function plot(params, fname, xlabel, ylabel, title)
 	gnuplot.plotflush()
 end
 
-function load_dataset(train_or_test, count)
+function load_mnist_dataset(train_or_test, count)
 	-- load
 	local data
 	if train_or_test == 'train' then
@@ -99,8 +99,8 @@ if dataset == 'cifar' then
 	trainData = cifar.trainData.data:reshape(cifar.trainData.data:size(1), 3*32*32) / 255.0
 	testData, testLabels = cifar.testData.data:reshape(cifar.testData.data:size(1), 3*32*32) / 255.0, cifar.testData.labels
 else	
-	trainData = load_dataset('train', opt.train_size)
-	testData, testLabels = load_dataset('test', opt.test_size)
+	trainData = load_mnist_dataset('train', opt.train_size)
+	testData, testLabels = load_mnist_dataset('test', opt.test_size)
 end
 
 function test(ds, model, criterion, iter, flag)

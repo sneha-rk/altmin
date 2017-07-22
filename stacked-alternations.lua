@@ -141,6 +141,13 @@ function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, flag)
 			encoder:zeroGradParameters()
 			decoder:zeroGradParameters()
 			
+			if j % opt.print_every == 0 then
+			   local t, test_loss = test(testDs, model, criterion, ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, 0)
+			   print(string.format("%d, %1.6f", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+			end
+
+
+
 			train_losses[#train_losses + 1] = loss -- append the new loss
 		end
 	end
@@ -177,12 +184,12 @@ function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
 		for l = 1, opt.k - 1 do
 			print(l)
 			--Train Encoder			
-			print('Encoder')
+			-- print('Encoder')
 			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, true)
 			encoder_train_loss[#encoder_train_loss + 1] = loss
 			
 			--Train Decoder
-			print('Decoder')
+			-- print('Decoder')
 			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, false)
 			decoder_train_loss[#decoder_train_loss + 1] = loss
 		end
