@@ -7,25 +7,25 @@ require 'os'
 require 'gnuplot'
 signal = require('posix.signal')
 
-dataset = 'cifar'
+dataset = ''
 activation = 'relu'
 
 
 opt = 
 {
-	n_epochs = 200,
+	n_epochs = 1000,
 	epochs = 1,
 	batch_size = 500,
 
 	print_every = 10,  
-	learningRate = 1e-3,
+	learningRate = 1e-4,
 	epsilon = 1e-4,
 
 	inputSize = 32*32,
 	outputSize = 500,	
-	sizes = {}, --Sizes of inputs in various layers.
+	sizes = {1024, 750, 500, 750, 1024}, --Sizes of inputs in various layers.
 	
-	k = 1, --Number of hidden layers
+	k = 3, --Number of hidden layers
 	train_size = 50000,
 	channels = 3,
 	test_size = 10000
@@ -38,9 +38,20 @@ print(opt)
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
+
+-- Log architecture!
+log_f = io.open("arch_logging.lua", "a+")
+log_f:write(string.format("%s, %1.6f", dir_name, opt.learningRate))
+-- log_f:write(opt)
+log_f:write("\n")
+log_f:close()
+
+
+test_f = io.open(dir_name.. "/test_error.lua", "a+")
+train_f = io.open(dir_name.."/train_error.lua", "a+")
 
 
 -- Loading appropriate dataset
@@ -50,12 +61,12 @@ if dataset == 'cifar' then
 
 	opt.train_size = 50000
 	opt.channels = 3
-	opt.sizes = {opt.inputSize * opt.channels, opt.outputSize, opt.inputSize * opt.channels}
 else	
 	opt.train_size = 60000
 	opt.channels = 1
-	opt.sizes = {opt.inputSize * opt.channels, opt.outputSize, opt.inputSize * opt.channels}
 end
+opt.sizes[1] = opt.channels * 1024
+opt.sizes[5] = opt.channels * 1024
 
 
 function map(func, array)
@@ -171,6 +182,9 @@ function trainOneLayer(opt, ds, model, conjugateModel, criterion, testDs, iter)
 			if j % opt.print_every == 0 then
 			   local t, test_loss = test(testDs, model, conjugateModel, criterion, (iter * opt.train_size / opt.batch_size) + j, 0)
 			   print(string.format("%d, %1.6f", (iter * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+
+			   test_f:write(string.format("%d, %1.6f\n", ((iter * opt.k ) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+			   train_f:write(string.format("%d, %1.6f\n", ((iter * opt.k ) * opt.train_size / opt.batch_size) + j, loss))
 			end
 			
 			train_losses[#train_losses + 1] = loss -- append the new loss
@@ -251,27 +265,59 @@ function saveAll()
 	plot(max_dec_loss, dir_name..'/Max_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Maximum Loss Plot')
 
 	plot(tst_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
+
+	test_f:close()
+	train_f:close()
 end
 
+
+-- -- encoder
+-- encoder = nn.Sequential()
+-- encoder:add(nn.Linear(opt.channels * opt.inputSize,opt.outputSize))
+-- if activation == 'relu' then
+-- 		encoder:add(nn.LeakyReLU())
+-- else 
+-- 	encoder:add(nn.Sigmoid())
+-- end
+
+-- -- decoder
+-- decoder = nn.Sequential()
+-- decoder:add(nn.Linear(opt.outputSize,opt.channels * opt.inputSize))
+-- if activation == 'relu' then
+-- 	decoder:add(nn.LeakyReLU())
+-- else 
+-- 	layer:add(nn.Sigmoid())
+-- end
+-- decoder:add(nn.ReLU())
+
+-- crit = nn.MSECriterion()
 
 -- encoder
 encoder = nn.Sequential()
-encoder:add(nn.Linear(opt.channels * opt.inputSize,opt.outputSize))
-if activation == 'relu' then
-		encoder:add(nn.ReLU())
-else 
-	encoder:add(nn.Sigmoid())
+
+for i = 1, 2 do
+	encoder:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
+	encoder:add(nn.LeakyReLU())
+	if arg[1] then
+		wts = torch.load(dir_name..string.format('/encoder_weights_%d.dat', i))
+		encoder.modules[2*i - 1].weights = wts
+	end
 end
+print(encoder)
 
 -- decoder
 decoder = nn.Sequential()
-decoder:add(nn.Linear(opt.outputSize,opt.channels * opt.inputSize))
-if activation == 'relu' then
-	decoder:add(nn.ReLU())
-else 
-	layer:add(nn.Sigmoid())
+
+for i = 3, 4 do
+	-- j = opt.k + 1 - i
+	decoder:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
+	decoder:add(nn.LeakyReLU())
+	if arg[1] then
+		wts = torch.load(dir_name..string.format('/decoder_weights_%d.dat', j))
+		decoder.modules[2*j - 1].weights = wts
+	end
 end
-decoder:add(nn.ReLU())
+print(decoder)
 
 crit = nn.MSECriterion()
 
