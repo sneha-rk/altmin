@@ -4,19 +4,25 @@ require 'nn'
 require 'image'
 require 'os'
 require 'gnuplot'
+require 'io'
 signal = require('posix.signal')
+
+dataset = ''
+activation = 'relu'
 
 opt = 
 {
-	epochs = 2,
-	batch_size = 100,
-	print_every = 250,  
-	train_size = 600,
-	test_size = 100,
-	epsilon = 1e-4,
-	sizes = {1024, 500, 100}, --Sizes of inputs in various layers.
-	learningRate = 1e-4 --SET PROPERLY
+	epochs = 1,
+	batch_size = 500,
+	print_every = 10,  
+	train_size = 60000,
+	test_size = 10000,
+	epsilon = 1.0e-4,
+	sizes = {1024, 750, 500}, --Sizes of inputs in various layers.
+	learningRate = 1.0e-4, --SET PROPERLY
+	channels = 3
 }
+
 
 opt.k = #opt.sizes --Number of hidden layers is 2k - 3
 
@@ -25,9 +31,33 @@ print(opt)
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = os.date('%B_')..os.date('%D'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
+
+-- Log architecture!
+log_f = io.open("arch_logging.lua", "a+")
+log_f:write(string.format("%s, %1.6f", dir_name, opt.learningRate))
+-- log_f:write(opt)
+log_f:write("\n")
+log_f:close()
+
+
+test_f = io.open(dir_name.. "/test_error.lua", "a+")
+train_f = io.open(dir_name.."/train_error.lua", "a+")
+
+-- Loading appropriate dataset
+if dataset == 'cifar' then
+	print('Using CIFAR-10 Dataset...')
+	require 'dataset-cifar'
+
+	opt.train_size = 50000
+	opt.channels = 3
+else	
+	opt.train_size = 60000
+	opt.channels = 1
+end
+opt.sizes[1] = opt.channels * 32 * 32
 
 function map(func, array)
 	local new_array = {}
@@ -67,6 +97,15 @@ function load_dataset(train_or_test, count)
 	return data.data, data.labels
 end
 
+-- Loading appropriate dataset
+if dataset == 'cifar' then
+	trainData = cifar.trainData.data:reshape(cifar.trainData.data:size(1), 3*32*32) / 255.0
+	testData, testLabels = cifar.testData.data:reshape(cifar.testData.data:size(1), 3*32*32) / 255.0, cifar.testData.labels
+else	
+	trainData = load_dataset('train', opt.train_size)
+	testData, testLabels = load_dataset('test', opt.test_size)
+end
+
 function test(ds, encoder, decoder, criterion, iter)
 	local t = encoder:forward(ds)
 	t = decoder:forward(t)
@@ -82,7 +121,11 @@ function test(ds, encoder, decoder, criterion, iter)
 	for i = 1, 100 do 
 		labels[i] = testLabels[indices[i]]
 		local x = t[indices[i]]
-		x = x:reshape(32,32)
+		if dataset == 'cifar' then
+				x = x:reshape(3, 32,32)
+		else 
+			x = x:reshape(32,32)
+		end 
 		local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i], i, iter)
 		image.save(fileName, x)
 	end
@@ -91,7 +134,7 @@ function test(ds, encoder, decoder, criterion, iter)
 	return t, -1 * loss
 end
 
-function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, flag)
+function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, iter,testDs,flag)
 	train_losses = {}
 	for i = 1, opt.epochs do
 		-- print('----- EPOCH ', i, '-----')
@@ -104,16 +147,16 @@ function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, flag)
 			local cur_ds = ds[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
 			local cur_ans = ans[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
 			cur = cur + opt.batch_size
-			j = j + 1
+			
 			
 
 			local encoder_outputs = encoder:forward(cur_ds)
 			local decoder_outputs = decoder:forward(encoder_outputs)
 			local loss = criterion:forward(decoder_outputs, cur_ans)
 
-			if j % opt.print_every == 0 then
-			   print(string.format("Iteration %d, loss %1.6f", j, loss))
-			end
+			-- if j % opt.print_every == 0 then
+			--    print(string.format("Iteration %d, loss %1.6f", j, loss))
+			-- end
 
 			local dloss_doutput = criterion:backward(decoder_outputs, cur_ans)
 			local encoder_grad_input = decoder:backward(encoder_outputs, dloss_doutput)
@@ -138,14 +181,17 @@ function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, flag)
 				layer:updateParameters(opt.learningRate)
 			end
 			
-			encoder:zeroGradParameters()
-			decoder:zeroGradParameters()
+			-- encoder:zeroGradParameters()
+			-- decoder:zeroGradParameters()
 			
 			if j % opt.print_every == 0 then
-			   local t, test_loss = test(testDs, model, criterion, ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, 0)
+			   local t, test_loss = test(testDs, encoder, decoder, criterion, ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, 0)
 			   print(string.format("%d, %1.6f", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
-			end
 
+			   test_f:write(string.format("%d, %1.6f\n", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+			   train_f:write(string.format("%d, %1.6f\n", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, loss))
+			end
+			j = j + 1
 
 
 			train_losses[#train_losses + 1] = loss -- append the new loss
@@ -182,15 +228,15 @@ function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
 		local loss = {}
 
 		for l = 1, opt.k - 1 do
-			print(l)
+			-- print(l)
 			--Train Encoder			
 			-- print('Encoder')
-			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, true)
+			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, iter,testDs,true)
 			encoder_train_loss[#encoder_train_loss + 1] = loss
 			
 			--Train Decoder
 			-- print('Decoder')
-			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, false)
+			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, iter,testDs,false)
 			decoder_train_loss[#decoder_train_loss + 1] = loss
 		end
 
@@ -285,6 +331,9 @@ function saveAll()
 	plot(max_dec_loss, dir_name..'/Max_Decoder_Loss.png', 'Epochs', 'Loss', 'Decoder Training Maximum Loss Plot')
 
 	plot(tst_loss, dir_name..'/Test_Loss.png', 'Epochs', 'Loss', 'Test Loss Plot')
+
+	test_f:close()
+	train_f:close()
 end
 
 -- encoder
@@ -292,7 +341,7 @@ encoder = nn.Sequential()
 
 for i = 1, opt.k - 1 do
 	encoder:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
-	encoder:add(nn.ReLU())
+	encoder:add(nn.LeakyReLU())
 	if arg[1] then
 		wts = torch.load(dir_name..string.format('/encoder_weights_%d.dat', i))
 		encoder.modules[2*i - 1].weights = wts
@@ -306,7 +355,7 @@ decoder = nn.Sequential()
 for i = opt.k , 2, -1 do
 	j = opt.k + 1 - i
 	decoder:add(nn.Linear(opt.sizes[i], opt.sizes[i-1]))
-	decoder:add(nn.ReLU())
+	decoder:add(nn.LeakyReLU())
 	if arg[1] then
 		wts = torch.load(dir_name..string.format('/decoder_weights_%d.dat', j))
 		decoder.modules[2*j - 1].weights = wts
@@ -328,8 +377,8 @@ if arg[1] then
 	end
 end
 
-trainData = load_dataset('train', opt.train_size)
-testData, testLabels = load_dataset('test', opt.test_size)
+-- trainData = load_dataset('train', opt.train_size)
+-- testData, testLabels = load_dataset('test', opt.test_size)
 enc = nil
 dec = nil 
 enc_tr_loss = nil 
