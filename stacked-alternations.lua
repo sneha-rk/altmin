@@ -7,7 +7,7 @@ require 'gnuplot'
 require 'io'
 signal = require('posix.signal')
 
-dataset = ''
+dataset = 'cifar'
 activation = 'relu'
 
 opt = 
@@ -18,9 +18,9 @@ opt =
 	train_size = 60000,
 	test_size = 10000,
 	epsilon = 1.0e-4,
-	sizes = {1024, 750, 500}, --Sizes of inputs in various layers.
+	sizes = {1024, 2000, 1000}, --Sizes of inputs in various layers.
 	learningRate = 1.0e-4, --SET PROPERLY
-	channels = 3
+	channels = 1
 }
 
 
@@ -31,20 +31,20 @@ print(opt)
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.daote('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
 
 -- Log architecture!
 log_f = io.open("arch_logging.lua", "a+")
-log_f:write(string.format("%s, %1.6f", dir_name, opt.learningRate))
+log_f:write(string.format("%s, %1.6f, %d", dir_name, opt.learningRate, opt.k))
 -- log_f:write(opt)
 log_f:write("\n")
 log_f:close()
 
 
-test_f = io.open(dir_name.. "/test_error.lua", "a+")
-train_f = io.open(dir_name.."/train_error.lua", "a+")
+test_f = io.open(dir_name.. "/test_error.csv", "a+")
+train_f = io.open(dir_name.."/train_error.csv", "a+")
 
 -- Loading appropriate dataset
 if dataset == 'cifar' then
@@ -106,7 +106,8 @@ else
 	testData, testLabels = load_dataset('test', opt.test_size)
 end
 
-function test(ds, encoder, decoder, criterion, iter)
+
+function test(ds, encoder, decoder, criterion, iter, imgflag)
 	local t = encoder:forward(ds)
 	t = decoder:forward(t)
 	local loss = {}
@@ -114,25 +115,29 @@ function test(ds, encoder, decoder, criterion, iter)
 		loss[#loss + 1] = criterion:forward(t[i], ds[i])
 	end
 	loss = - 1 * torch.DoubleTensor(loss)
-	local best10, indices = loss:topk(100)
-	local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
-	local labels = {}
-	torch.save(idxFile, indices)
-	for i = 1, 100 do 
-		labels[i] = testLabels[indices[i]]
-		local x = t[indices[i]]
-		if dataset == 'cifar' then
+	if imgflag == 1 then
+		local best10, indices = loss:topk(100)
+		local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
+		local labels = {}
+		torch.save(idxFile, indices)
+		for i = 1, 100 do 
+			labels[i] = testLabels[indices[i]]
+			local x = t[indices[i]]
+			if dataset == 'cifar' then
 				x = x:reshape(3, 32,32)
-		else 
-			x = x:reshape(32,32)
-		end 
-		local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i], i, iter)
-		image.save(fileName, x)
+			else 
+				x = x:reshape(32,32)
+			end 
+
+			local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i] + 1, i, iter)
+			image.save(fileName, x)
+		end
+		local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
+		torch.save(labelFile, torch.ByteTensor(labels))
 	end
-	local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
-	torch.save(labelFile, torch.ByteTensor(labels))
 	return t, -1 * loss
 end
+
 
 function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, iter,testDs,flag)
 	train_losses = {}
@@ -242,7 +247,7 @@ function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
 
 
 		--Test
-		local t, test_loss = test(testDs, encoder, decoder, criterion, iter)
+		local t, test_loss = test(testDs, encoder, decoder, criterion, iter, 1)
 		test_losses[#test_losses + 1] = test_loss:sum()
 
 		-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
