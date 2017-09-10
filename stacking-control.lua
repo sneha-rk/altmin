@@ -12,7 +12,7 @@ activation = 'relu'
 
 opt = 
 {
-	epochs = 2,
+	epochs = 50,
 	batch_size = 500,
 	print_every = 10,  
 	train_size = 60000,
@@ -33,7 +33,7 @@ print(opt)
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = 'nofinetunec'..dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
 
@@ -316,7 +316,7 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 									saveAll()
 									os.exit(128 + signum)
 								end)
-	while iter <= opt.n do --Figure out a stopping condition
+	while iter < opt.n do --Figure out a stopping condition
 
 		local loss = {}
 
@@ -327,26 +327,32 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 				encoder_train_loss[#encoder_train_loss + 1] = loss_enc
 				decoder_train_loss[#decoder_train_loss + 1] = loss_dec
 
+				--Test
+				local t, test_loss = test(testDs, models, criterion, iter, 1)
+				test_losses[#test_losses + 1] = test_loss:sum()
+
+				-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
+				print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+
 				iter = iter + 1
 			end
-			--Test
-			local t, test_loss = test(testDs, models, criterion, iter, 1)
-			test_losses[#test_losses + 1] = test_loss:sum()
-
-			-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
-			print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+			
 		end
 
 		-- Finetune
-		models, loss_enc, loss_dec = finetune(opt, trainDs, trainDs:clone(), models, criterion, iter,testDs)
+			-- for ep = 1, opt.epochs do 
+			-- 	models, loss_enc, loss_dec = finetune(opt, trainDs, trainDs:clone(), models, criterion, iter,testDs)
 
-		--Test
-		local t, test_loss = test(testDs, models, criterion, iter, 1)
-		test_losses[#test_losses + 1] = test_loss:sum()
+			-- 	iter = iter + 1
 
-		iter = iter + 1		
-		-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
-		print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+			-- 	--Test
+			-- 	local t, test_loss = test(testDs, models, criterion, iter, 1)
+			-- 	test_losses[#test_losses + 1] = test_loss:sum()
+
+			-- 	iter = iter + 1		
+			-- 	-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
+			-- 	print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+			-- end
 		
 	end
 	return models, encoder_train_loss, decoder_train_loss, test_losses
