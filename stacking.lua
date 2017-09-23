@@ -41,13 +41,13 @@ end
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = exp..'/stack'..dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = exp..'/stack_'..dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size..'_finetune'..opt.n_finetune..'_k'..opt.k
 	os.execute('mkdir -p '..dir_name)
 end
 
 -- Log architecture!
 log_f = io.open("arch_logging.csv", "a+")
-log_f:write(string.format("%s, %1.6f, %d", dir_name, opt.learningRate, opt.k))
+log_f:write(string.format("%s, %1.6f, %d, %d", dir_name, opt.learningRate, opt.k, opt.n_finetune))
 for i = 1, opt.k do 
 	log_f:write(", %d", opt.sizes[i])
 end
@@ -474,7 +474,11 @@ for i = 1, opt.k - 1 do
 	e = nn.Sequential()
 
 	e:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
-	e:add(nn.LeakyReLU())
+	if activation == 'relu' then 
+		e:add(nn.LeakyReLU())
+	else 
+		e:add(nn.Sigmoid())
+	end
 	if arg[1] then
 		wts = torch.load(dir_name..string.format('/encoder_weights_%d.dat', i))
 		e.modules[2*i - 1].weights = wts
@@ -490,7 +494,11 @@ for i = opt.k, 2, - 1 do
 	d = nn.Sequential()
 
 	d:add(nn.Linear(opt.sizes[i], opt.sizes[i-1]))
-	d:add(nn.LeakyReLU())
+	if activation == 'relu' then 
+		d:add(nn.LeakyReLU())
+	else 
+		d:add(nn.Sigmoid())
+	end
 	if arg[1] then
 		wts = torch.load(dir_name..string.format('/decoder_weights_%d.dat', i))
 		d.modules[2*i - 1].weights = wts
@@ -503,7 +511,11 @@ lnks = {}
 for i = 1, opt.n_finetune do	
 	l = nn.Sequential()
 	l:add(nn.Linear(opt.sizes[opt.k], opt.sizes[opt.k]))
-	l:add(nn.LeakyReLU())
+	if activation == 'relu' then 
+		l:add(nn.LeakyReLU())
+	else 
+		l:add(nn.Sigmoid())
+	end
 	lnks[#lnks + 1] = l
 end
 -- autoencoder = nn.Sequential()
