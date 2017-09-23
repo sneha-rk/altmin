@@ -7,8 +7,8 @@ This README would normally document whatever steps are necessary to get your app
 
 *change options* - Don't have commandline options yet
 
-th control.lua 
-th k-layers.lua
+th control.lua  or stacking-control.lua
+th minibatch-stacked-alternations.lua or stacking.lua
 
 Change options:
 
@@ -44,9 +44,12 @@ opt - can change
 
 ### Contents ###
 1. mnist.t7 : Contains MNIST Dataset. Do not touch!
-2. train-autoencoder.lua - The code for training the autoencoder.
+2. minibatch-stacked-alternations.lua - The code for training the autoencoder.
 3. control.lua - the control experiment - A standard torch autoencoder
 4. dataset-mnist.lua - Code to download and load the MNIST dataset.
+5. dataset-cifar.lua - Code to download and load the CIFAR-10 dataset.
+6. stacking.lua - Trains a multilayer autoencoder by stacking using DANTE.
+7. stacking-control.lua - Trains a multilayer autoencoder by stacking using SGD.
 
 ### Who do I talk to? ###
 
