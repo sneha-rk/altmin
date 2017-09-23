@@ -5,23 +5,27 @@ require 'image'
 require 'os'
 require 'gnuplot'
 require 'io'
+require 'paths'
 signal = require('posix.signal')
 
 dataset = 'mnist'
 activation = 'relu'
+exp = 'experiments'
 
 opt = 
 {
 	epochs = 20,
+	n_finetune = 1,
+
 	batch_size = 500,
 	print_every = 10,  
 	train_size = 60000,
 	test_size = 10000,
-	epsilon = 1.0e-4,
-	sizes = {1024, 750, 500}, --Sizes of inputs in various layers.
-	learningRate = 1.0e-3, --SET PROPERLY
+	sizes = {1024, 500, 250}, --Sizes of inputs in various layers.
 	channels = 1,
-	n = 80
+
+	learningRate = 1.0e-3, --SET PROPERLY
+	n = 2
 
 }
 
@@ -30,17 +34,23 @@ opt.k = #opt.sizes --Number of hidden layers is 2k - 3
 
 print(opt)
 
+if not paths.dirp(exp) then
+	os.execute('mkdir -p '..exp)
+end
+
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = 'nofinetune'..dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = exp..'/stack'..dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
 
 -- Log architecture!
-log_f = io.open("arch_logging.lua", "a+")
+log_f = io.open("arch_logging.csv", "a+")
 log_f:write(string.format("%s, %1.6f, %d", dir_name, opt.learningRate, opt.k))
--- log_f:write(opt)
+for i = 1, opt.k do 
+	log_f:write(", %d", opt.sizes[i])
+end
 log_f:write("\n")
 log_f:close()
 
@@ -114,6 +124,9 @@ function test(ds, models, criterion, iter, imgflag)
 	for i = 1, opt.k-1 do 
 		t = models.encoders[i]:forward(t)
 	end
+	for i = 1, opt.n_finetune do 
+		t = models.links[i]:forward(t)
+	end
 	for i = 1, opt.k-1 do 
 		t = models.decoders[i]:forward(t)
 	end
@@ -152,9 +165,7 @@ function trainOneLayer(opt, ds, ans, models, criterion, l, iter,testDs)
 	train_losses_dec = {}
 	local models = models
 
-	-- for i = 1, opt.epochs do
-		-- print('----- EPOCH ', i, '-----')
-		--Shuffle dataset
+	--Shuffle dataset
 	local shuffled_indices =  torch.randperm(opt.train_size, 'torch.LongTensor')
 	ds = ds:index(1, shuffled_indices):squeeze()
 	ans = ans:index(1, shuffled_indices):squeeze()
@@ -182,9 +193,8 @@ function trainOneLayer(opt, ds, ans, models, criterion, l, iter,testDs)
 			-- Backward
 			local dloss_doutput = criterion:backward(decoder_outputs, encoder_outputs[#encoder_outputs - 1])
 			local encoder_grad_input = models.decoders[opt.k - l]:backward(encoder_outputs[#encoder_outputs], dloss_doutput)
-			-- for i = l, 1, -1 do 
-			-- 	local grad = models.encoders[i]:forward(cur_ds)
-			-- end
+			
+
 			local grad = models.encoders[l]:backward(encoder_outputs[#encoder_outputs - 1], encoder_grad_input)
 			
 			-- Update
@@ -237,16 +247,15 @@ function finetune(opt, ds, ans, models, criterion, iter,testDs)
 	train_losses_dec = {}
 	local models = models
 
-	-- for i = 1, opt.epochs do
-		-- print('----- EPOCH ', i, '-----')
-		--Shuffle dataset
+
+	-- Shuffle dataset
 	local shuffled_indices =  torch.randperm(opt.train_size, 'torch.LongTensor')
 	ds = ds:index(1, shuffled_indices):squeeze()
 	ans = ans:index(1, shuffled_indices):squeeze()
 	local cur = 1 -- Start of minibatch
 	local j = 0   -- Itercount
 
-	-- current epoch
+	-- Current epoch
 	while cur < opt.train_size do
 		-- Take current minibatch
 		local cur_ds = ds[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
@@ -261,7 +270,11 @@ function finetune(opt, ds, ans, models, criterion, iter,testDs)
 		for f = 1, opt.k - 1 do 
 			encoder_outputs[#encoder_outputs + 1] = models.encoders[f]:forward(encoder_outputs[#encoder_outputs])
 		end
-		local decoder_outputs = {encoder_outputs[#encoder_outputs]}
+		local link_outputs = {encoder_outputs[#encoder_outputs]}
+		for f = 1, opt.n_finetune do 
+			link_outputs[#link_outputs + 1] = models.links[f]:forward(link_outputs[#link_outputs])
+		end 
+		local decoder_outputs = {link_outputs[#link_outputs]}
 		for f = opt.k - 1, 1, -1 do 
 			decoder_outputs[#decoder_outputs + 1] = models.decoders[opt.k - f]:forward(decoder_outputs[#decoder_outputs])
 		end
@@ -272,6 +285,9 @@ function finetune(opt, ds, ans, models, criterion, iter,testDs)
 		for f = opt.k - 1, 1, -1 do 
 			grad_input = models.decoders[f]:backward(decoder_outputs[#decoder_outputs + f - opt.k], grad_input)
 		end
+		for f = opt.n_finetune, 1, -1 do
+			grad_input = models.links[f]:backward(link_outputs[#link_outputs - f + opt.n_finetune - 1], grad_input)
+		end 
 		for f = opt.k - 1, 1, -1 do 
 			grad_input = models.encoders[f]:backward(encoder_outputs[#encoder_outputs + f - opt.k], grad_input)
 		end
@@ -280,6 +296,9 @@ function finetune(opt, ds, ans, models, criterion, iter,testDs)
 		for f = opt.k - 1, 1, -1 do 
 			models.encoders[f]:updateParameters(opt.learningRate)
 		end
+		for f = opt.n_finetune, 1, -1 do
+			models.links[f]:updateParameters(opt.learningRate)
+		end 
 		for f = opt.k - 1, 1, -1 do 
 			models.decoders[f]:updateParameters(opt.learningRate)
 		end
@@ -306,13 +325,8 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 	local encoder_train_loss = {}
 	local decoder_train_loss = {}
 	local test_losses = {}
-	local iter = 1
+	local iter = 0
 	local models = models
-
-	-- for i = 1, opt.k do
-	-- 	table.insert(encoder_train_loss, {})
-	-- 	table.insert(decoder_train_loss, {})
-	-- end
 
 	signal.signal(signal.SIGINT,function(signum)
 									print("Ctrl-C interrupt in alternateMin! Exiting...")
@@ -339,25 +353,27 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 				local t, test_loss = test(testDs, models, criterion, iter, 1)
 				test_losses[#test_losses + 1] = test_loss:sum()
 
+				iter = iter + 2
 				-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
 				print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
 
-				iter = iter + 2
+				
 			end	
 		end
 
 		-- Finetune
-		-- for ep = 1, opt.epochs do 
-		-- 	models, loss_enc, loss_dec = finetune(opt, trainDs, trainDs:clone(), models, criterion, iter,testDs)
+		if opt.n_finetune > 0 then 
+			for ep = 1, opt.epochs do 
+				models, loss_enc, loss_dec = finetune(opt, trainDs, trainDs:clone(), models, criterion, iter,testDs)
 
-		-- 	--Test
-		-- 	local t, test_loss = test(testDs, models, criterion, iter, 1)
-		-- 	test_losses[#test_losses + 1] = test_loss:sum()
+				--Test
+				local t, test_loss = test(testDs, models, criterion, iter, 1)
+				test_losses[#test_losses + 1] = test_loss:sum()
 
-		-- 	iter = iter + 1		
-		-- 	-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
-		-- 	print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
-		-- end		
+				iter = iter + 1		
+				print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+			end		
+		end
 	end
 	return models, encoder_train_loss, decoder_train_loss, test_losses
 end
@@ -367,6 +383,9 @@ function saveAll()
 	for i = 1, opt.k - 1 do
 		torch.save(dir_name..string.format('/encoder_weights_%d.dat', i), models.encoders[i].modules[1].weight)
 		torch.save(dir_name..string.format('/decoder_weights_%d.dat', i), models.decoders[i].modules[1].weight)
+	end
+	for i = 1, opt.n_finetune do 
+		torch.save(dir_name..string.format('/link_weights_%d.dat', i), models.links[i].modules[1].weight)
 	end
 	--Save old stuff as well!
 	if arg[1] then
@@ -446,34 +465,6 @@ function saveAll()
 	train_f:close()
 end
 
--- encoder
--- encoder = nn.Sequential()
-
--- for i = 1, opt.k - 1 do
--- 	encoder:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
--- 	encoder:add(nn.LeakyReLU())
--- 	if arg[1] then
--- 		wts = torch.load(dir_name..string.format('/encoder_weights_%d.dat', i))
--- 		encoder.modules[2*i - 1].weights = wts
--- 	end
--- end
--- print(encoder)
-
--- -- decoder
--- decoder = nn.Sequential()
-
--- for i = opt.k , 2, -1 do
--- 	j = opt.k + 1 - i
--- 	decoder:add(nn.Linear(opt.sizes[i], opt.sizes[i-1]))
--- 	decoder:add(nn.LeakyReLU())
--- 	if arg[1] then
--- 		wts = torch.load(dir_name..string.format('/decoder_weights_%d.dat', j))
--- 		decoder.modules[2*j - 1].weights = wts
--- 	end
--- end
--- print(decoder)
-
-
 -- List of encoders and list of decoders.
 encs = {}
 decs = {}
@@ -508,6 +499,13 @@ for i = opt.k, 2, - 1 do
 	decs[#decs + 1] = d
 end
 
+lnks = {}
+for i = 1, opt.n_finetune do	
+	l = nn.Sequential()
+	l:add(nn.Linear(opt.sizes[opt.k], opt.sizes[opt.k]))
+	l:add(nn.LeakyReLU())
+	lnks[#lnks + 1] = l
+end
 -- autoencoder = nn.Sequential()
 -- autoencoder:add(encoder)
 -- autoencoder:add(decoder)
@@ -520,7 +518,8 @@ end
 -- end
 
 -- Possibly have all merged???
-models = {encoders = encs, decoders = decs}
+models = {encoders = encs, decoders = decs, links = lnks}
+print(models)
 
 crit = nn.MSECriterion()
 
@@ -536,8 +535,7 @@ if arg[1] then
 	end
 end
 
--- trainData = load_dataset('train', opt.train_size)
--- testData, testLabels = load_dataset('test', opt.test_size)
+
 enc = nil
 dec = nil 
 enc_tr_loss = nil 
