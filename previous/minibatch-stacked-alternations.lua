@@ -5,6 +5,7 @@ require 'image'
 require 'os'
 require 'gnuplot'
 require 'io'
+require 'paths'
 signal = require('posix.signal')
 
 dataset = 'mnist'
@@ -18,9 +19,11 @@ opt =
 	train_size = 60000,
 	test_size = 10000,
 	epsilon = 1.0e-4,
-	sizes = {1024, 2000, 1000}, --Sizes of inputs in various layers.
-	learningRate = 1.0e-4, --SET PROPERLY
-	channels = 1
+	sizes = {1024, 500}, --Sizes of inputs in various layers.
+	learningRate = 1.0e-3, --SET PROPERLY
+	channels = 1,
+	n = 120
+
 }
 
 
@@ -36,9 +39,11 @@ else
 end
 
 -- Log architecture!
-log_f = io.open("arch_logging.lua", "a+")
+log_f = io.open("arch_logging.csv", "a+")
 log_f:write(string.format("%s, %1.6f, %d", dir_name, opt.learningRate, opt.k))
--- log_f:write(opt)
+for i = 1, opt.k do 
+	log_f:write(", %d", sizes[i])
+end
 log_f:write("\n")
 log_f:close()
 
@@ -239,7 +244,7 @@ function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
 									saveAll()
 									os.exit(128 + signum)
 								end)
-	while true do --Figure out a stopping condition
+	while iter <= opt.n do --Figure out a stopping condition
 
 		local loss = {}
 
@@ -263,7 +268,7 @@ function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
 
 		-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
 		print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
-		iter = iter + 1		
+		iter = iter + 2	
 	end
 	return encoder, decoder, encoder_train_loss, decoder_train_loss, test_losses
 end

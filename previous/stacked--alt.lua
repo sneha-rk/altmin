@@ -1,82 +1,50 @@
 require 'torch'
 require 'dataset-mnist'
-
 require 'nn'
 require 'image'
 require 'os'
 require 'gnuplot'
+require 'io'
 signal = require('posix.signal')
 
-dataset = 'mnist'
+dataset = ''
 activation = 'relu'
-
 
 opt = 
 {
-	n_epochs = 200,
 	epochs = 1,
 	batch_size = 500,
-
 	print_every = 10,  
-	learningRate = 5.0e-3,
-	epsilon = 1e-4,
-
-	inputSize = 32*32,
-	outputSize = 500,	
-	sizes = {1024, 750, 500}, --Sizes of inputs in various layers.
-	
-	k = 2, --Number of hidden layers
 	train_size = 60000,
-	channels = 1,
-	test_size = 10000
-}	
+	test_size = 10000,
+	epsilon = 1.0e-4,
+	sizes = {1024, 750, 500}, --Sizes of inputs in various layers.
+	learningRate = 1.0e-4, --SET PROPERLY
+	channels = 3
+}
 
-opt.k = #opt.sizes 
+
+opt.k = #opt.sizes --Number of hidden layers is 2k - 3
+
+print(opt)
 
 if arg[1] then
 	dir_name = arg[1]
 else
-	dir_name = 'c'..dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
+	dir_name = dataset..os.date('%B_')..os.date('%D'):sub(4,5)..os.date('%X'):sub(4,5)..'_e'..opt.epochs..'_b'..opt.batch_size..'_tr'..opt.train_size..'_tst'..opt.test_size
 	os.execute('mkdir -p '..dir_name)
 end
 
 -- Log architecture!
 log_f = io.open("arch_logging.lua", "a+")
-log_f:write(string.format("%s, %1.6f, %d", dir_name, opt.learningRate, opt.k))
+log_f:write(string.format("%s, %1.6f", dir_name, opt.learningRate))
 -- log_f:write(opt)
 log_f:write("\n")
 log_f:close()
 
 
-test_f = io.open(dir_name.. "/test_error.csv", "a+")
-train_f = io.open(dir_name.."/train_error.csv", "a+")
-
-
-
--- convert rgb to grayscale by averaging channel intensities
-function rgb2gray(im)
-	-- Image.rgb2y uses a different weight mixture
-
-	local dim, w, h = im:size()[1], im:size()[2], im:size()[3]
-	if dim ~= 3 then
-		 print('<error> expected 3 channels')
-		 return im
-	end
-
-	-- a cool application of tensor:select
-	local r = im:select(1, 1)
-	local g = im:select(1, 2)
-	local b = im:select(1, 3)
-
-	local z = torch.Tensor(w, h):zero()
-
-	-- z = z + 0.21r
-	z = z:add(0.21, r)
-	z = z:add(0.72, g)
-	z = z:add(0.07, b)
-	return z
-end
-
+test_f = io.open(dir_name.. "/test_error.lua", "a+")
+train_f = io.open(dir_name.."/train_error.lua", "a+")
 
 -- Loading appropriate dataset
 if dataset == 'cifar' then
@@ -85,22 +53,11 @@ if dataset == 'cifar' then
 
 	opt.train_size = 50000
 	opt.channels = 3
-elseif dataset == 'gcifar' then
-	print('Using CIFAR-10 Dataset...')
-	require 'dataset-cifar'
-
-	opt.train_size = 50000
-	opt.channels = 1
 else	
 	opt.train_size = 60000
 	opt.channels = 1
 end
-opt.sizes[1] = opt.channels * 1024
--- opt.sizes[5] = opt.channels * 1024
-
--- opt.sizes = {1024, 500,1024}
--- opt.k = 1
-
+opt.sizes[1] = opt.channels * 32 * 32
 
 function map(func, array)
 	local new_array = {}
@@ -130,11 +87,7 @@ function load_dataset(train_or_test, count)
 
 	-- vectorize each 2D data point into 1D
 	data.data = data.data:reshape(data.data:size(1), 32*32)
-	if dataset == 'gcifar' then 
-		data.data =data.data
-	else
-		data.data = data.data/255.0
-	end
+	data.data = data.data/255.0
 
 	print('--------------------------------')
 	print(' loaded dataset "' .. train_or_test .. '"')
@@ -148,28 +101,12 @@ end
 if dataset == 'cifar' then
 	trainData = cifar.trainData.data:reshape(cifar.trainData.data:size(1), 3*32*32) / 255.0
 	testData, testLabels = cifar.testData.data:reshape(cifar.testData.data:size(1), 3*32*32) / 255.0, cifar.testData.labels
-elseif dataset == 'gcifar' then 
-	trainData = torch.Tensor(opt.train_size, 32*32) 
-	testData = torch.Tensor(opt.test_size, 32*32)
-	testLabels = cifar.testData.labels
-
-	for i=1,opt.train_size do
-		trainData[i] = image.rgb2y(cifar.trainData.data[i]) 
-	end
-
-	for i=1,opt.test_size do
-		testData[i] = image.rgb2y(cifar.testData.data[i]) 
-	end
-
-	-- image.save('example.jpg', trainData[1])
-	-- trainData = image.rgb2y(cifar.trainData.data) / 255.0
-	-- testData, testLabels = image.rgb2y(cifar.testData.data) / 255.0, cifar.testData.labels
 else	
 	trainData = load_dataset('train', opt.train_size)
 	testData, testLabels = load_dataset('test', opt.test_size)
 end
 
-function test(ds, encoder, decoder, criterion, iter, flag)
+function test(ds, encoder, decoder, criterion, iter)
 	local t = encoder:forward(ds)
 	t = decoder:forward(t)
 	local loss = {}
@@ -177,85 +114,104 @@ function test(ds, encoder, decoder, criterion, iter, flag)
 		loss[#loss + 1] = criterion:forward(t[i], ds[i])
 	end
 	loss = - 1 * torch.DoubleTensor(loss)
-	if flag == 1 then
-		local best10, indices = loss:topk(100)
-		local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
-		local labels = {}
-		torch.save(idxFile, indices)
-		for i = 1, 100 do 
-			labels[i] = testLabels[indices[i]]
-			local x = t[indices[i]]
-			local orig = ds[indices[i]]
-			if dataset == 'cifar' then
+	local best10, indices = loss:topk(100)
+	local idxFile = string.format(dir_name.."/expt_top100Indices_epoch%d.dat", iter)
+	local labels = {}
+	torch.save(idxFile, indices)
+	for i = 1, 100 do 
+		labels[i] = testLabels[indices[i]]
+		local x = t[indices[i]]
+		if dataset == 'cifar' then
 				x = x:reshape(3, 32,32)
-				orig = orig:reshape(3, 32,32)
-			else 
-				x = x:reshape(32,32)
-				orig = orig:reshape(32,32)
-			end 
-
-			local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i] + 1, i, iter)
-			image.save(fileName, x)
-			local ofileName = string.format(dir_name.."/expt_l%d_top%d_epoch%dorig.jpeg", labels[i] + 1, i, iter)
-			image.save(ofileName, orig)
-		end
-		local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
-		torch.save(labelFile, torch.ByteTensor(labels))
+		else 
+			x = x:reshape(32,32)
+		end 
+		local fileName = string.format(dir_name.."/expt_l%d_top%d_epoch%d.jpeg", labels[i], i, iter)
+		image.save(fileName, x)
 	end
+	local labelFile = string.format(dir_name.."/expt_top10Labels_epoch%d.dat", iter)
+	torch.save(labelFile, torch.ByteTensor(labels))
 	return t, -1 * loss
 end
 
-function trainOneLayer(opt, ds, model, conjugateModel, criterion, testDs, iter)
+function trainOneLayer(opt, ds, ans, encoder, decoder, criterion, l, iter,testDs,flag)
 	train_losses = {}
 	for i = 1, opt.epochs do
-
 		-- print('----- EPOCH ', i, '-----')
 		local shuffled_indices =  torch.randperm(opt.train_size, 'torch.LongTensor')
 		ds = ds:index(1, shuffled_indices):squeeze()
+		ans = ans:index(1, shuffled_indices):squeeze()
 		local cur = 1
 		local j = 0
 		while cur < opt.train_size do
 			local cur_ds = ds[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
+			local cur_ans = ans[{{cur, math.min(cur+opt.batch_size, opt.train_size)},{}}]
 			cur = cur + opt.batch_size
-		 	
 			
-			--get parameters
-			local mParams, mGrads = model:getParameters()
-			mGrads:zero()
+			
 
-			-- Forward
-			local outputs = model:forward(cur_ds)
-			local outputs_conj = conjugateModel:forward(outputs)
-			local loss = criterion:forward(outputs_conj, cur_ds)
+			local encoder_outputs = encoder:forward(cur_ds)
+			local decoder_outputs = decoder:forward(encoder_outputs)
+			local loss = criterion:forward(decoder_outputs, cur_ans)
 
-			-- Backward
-			local dloss_doutput = criterion:backward(outputs_conj, cur_ds)
-			local gradInputConj = conjugateModel:backward(outputs, dloss_doutput)
-			local grad = model:backward(cur_ds, gradInputConj)
+			-- if j % opt.print_every == 0 then
+			--    print(string.format("Iteration %d, loss %1.6f", j, loss))
+			-- end
 
-			-- Update weights
-			model:updateParameters(opt.learningRate)
-			conjugateModel:updateParameters(opt.learningRate)
-
-			if j % opt.print_every == 0 then
-			   local t, test_loss = test(testDs, model, conjugateModel, criterion, (iter * opt.train_size / opt.batch_size) + j, 0)
-			   print(string.format("%d, %1.6f", (iter * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
-
-			   test_f:write(string.format("%d, %1.6f\n", ((iter * opt.k ) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
-			   train_f:write(string.format("%d, %1.6f\n", ((iter * opt.k ) * opt.train_size / opt.batch_size) + j, loss))
+			local dloss_doutput = criterion:backward(decoder_outputs, cur_ans)
+			local encoder_grad_input = decoder:backward(encoder_outputs, dloss_doutput)
+			local grad = encoder:backward(cur_ds, encoder_grad_input)
+			
+			if flag then
+				layer = encoder.modules[2*l - 1]
+				_, grad = layer:getParameters()
+				if grad:norm(2) < 1e-7 then
+					break
+				end
+				layer.gradInput = grad / grad:norm(2)
+				layer:updateParameters(opt.learningRate)
+			else
+				l = opt.k - l
+				layer = decoder.modules[2*l - 1]
+				_, grad = layer:getParameters()
+				if grad:norm(2) < 1e-7 then
+					break
+				end
+				layer.gradInput = grad / grad:norm(2)
+				layer:updateParameters(opt.learningRate)
 			end
 			
-			train_losses[#train_losses + 1] = loss -- append the new loss
+			-- encoder:zeroGradParameters()
+			-- decoder:zeroGradParameters()
+			
+			if j % opt.print_every == 0 then
+			   local t, test_loss = test(testDs, encoder, decoder, criterion, ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, 0)
+			   print(string.format("%d, %1.6f", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+
+			   test_f:write(string.format("%d, %1.6f\n", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, torch.mean(test_loss)))
+			   train_f:write(string.format("%d, %1.6f\n", ((iter * opt.k + l) * opt.train_size / opt.batch_size) + j, loss))
+			end
 			j = j + 1
+
+
+			train_losses[#train_losses + 1] = loss -- append the new loss
 		end
 	end
-	return model, conjugateModel, train_losses
+	return encoder, decoder, torch.DoubleTensor(train_losses)
 end
 
-function train(opt, encoder, decoder, criterion, trainDs, testDs)
-	local encoder_train_error = {}
-	local decoder_train_error = {}
-	local iter = 0
+function alternateMin(opt, encoder, decoder, criterion, trainDs, testDs)
+	local encoder_train_loss = {}
+	local decoder_train_loss = {}
+	local test_losses = {}
+	local iter = 1
+	local encoder = encoder
+	local decoder = decoder
+
+	-- for i = 1, opt.k do
+	-- 	table.insert(encoder_train_loss, {})
+	-- 	table.insert(decoder_train_loss, {})
+	-- end
 
 	signal.signal(signal.SIGINT,function(signum)
 									print("Ctrl-C interrupt in alternateMin! Exiting...")
@@ -267,19 +223,34 @@ function train(opt, encoder, decoder, criterion, trainDs, testDs)
 									saveAll()
 									os.exit(128 + signum)
 								end)
+	while true do --Figure out a stopping condition
 
-	while iter < opt.n_epochs do --Figure out a stopping condition
-		-- print("----- Encoder -----")
-		encoder, decoder, tmp = trainOneLayer(opt, trainDs, encoder, decoder, criterion, testDs, iter)
-		encoder_train_error[#encoder_train_error + 1] = tmp
+		local loss = {}
 
-		iter = iter + 1
-		local t, err = test(testDs, encoder, decoder, criterion, iter, 1)
+		for l = 1, opt.k - 1 do
+			-- print(l)
+			--Train Encoder			
+			-- print('Encoder')
+			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, iter,testDs,true)
+			encoder_train_loss[#encoder_train_loss + 1] = loss
+			
+			--Train Decoder
+			-- print('Decoder')
+			encoder, decoder, loss = trainOneLayer(opt, trainDs, trainDs:clone(), encoder, decoder, criterion, l, iter,testDs,false)
+			decoder_train_loss[#decoder_train_loss + 1] = loss
+		end
+
+
+		--Test
+		local t, test_loss = test(testDs, encoder, decoder, criterion, iter)
+		test_losses[#test_losses + 1] = test_loss:sum()
+
+		-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
+		print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
+		iter = iter + 1		
 	end
-	return encoder, decoder, encoder_train_error, decoder_train_error
+	return encoder, decoder, encoder_train_loss, decoder_train_loss, test_losses
 end
-
-
 
 function saveAll()
 	print('Saving everything...')
@@ -365,35 +336,10 @@ function saveAll()
 	train_f:close()
 end
 
-
--- -- encoder
--- encoder = nn.Sequential()
--- encoder:add(nn.Linear(opt.channels * opt.inputSize,opt.outputSize))
--- if activation == 'relu' then
--- 		encoder:add(nn.LeakyReLU())
--- else 
--- 	encoder:add(nn.Sigmoid())
--- end
-
--- -- decoder
--- decoder = nn.Sequential()
--- decoder:add(nn.Linear(opt.outputSize,opt.channels * opt.inputSize))
--- if activation == 'relu' then
--- 	decoder:add(nn.LeakyReLU())
--- else 
--- 	layer:add(nn.Sigmoid())
--- end
--- decoder:add(nn.ReLU())
-
--- crit = nn.MSECriterion()
-
--- print(encoder)
--- print(decoder)
-
 -- encoder
 encoder = nn.Sequential()
 
-for i = 1, 2 do
+for i = 1, opt.k - 1 do
 	encoder:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
 	encoder:add(nn.LeakyReLU())
 	if arg[1] then
@@ -405,16 +351,6 @@ print(encoder)
 
 -- decoder
 decoder = nn.Sequential()
-
--- for i = 3, 4 do
--- 	-- j = opt.k + 1 - i
--- 	decoder:add(nn.Linear(opt.sizes[i], opt.sizes[i+1]))
--- 	decoder:add(nn.LeakyReLU())
--- 	if arg[1] then
--- 		wts = torch.load(dir_name..string.format('/decoder_weights_%d.dat', j))
--- 		decoder.modules[2*j - 1].weights = wts
--- 	end
--- end
 
 for i = opt.k , 2, -1 do
 	j = opt.k + 1 - i
@@ -429,13 +365,26 @@ print(decoder)
 
 crit = nn.MSECriterion()
 
--- verbose
-print('==> Constructed linear auto-encoder')
+--Save old data
+if arg[1] then
+	dn = dir_name..'/old_'..os.date('%B_')..os.date('%D'):sub(4,5)..'_'..os.date('%H%M')
+	os.execute('mkdir -p '..dn)
+	os.execute('mv '..dir_name..'/*.png '..dn..'/')
+	os.execute('mv '..dir_name..'/*.jpeg '..dn..'/')
+	for i = 1, opt.k do
+		os.execute('mv '..dir_name..string.format('/encoder_weights_%d.dat ', i)..dn..'/')
+		os.execute('mv '..dir_name..string.format('/decoder_weights_%d.dat ', i)..dn..'/')
+	end
+end
 
--- Training the autoencoder.
+-- trainData = load_dataset('train', opt.train_size)
+-- testData, testLabels = load_dataset('test', opt.test_size)
+enc = nil
+dec = nil 
+enc_tr_loss = nil 
+dec_tr_loss = nil 
+test_loss = nil
 
-enc, dec, enc_tr, dec_tr = train(opt, encoder, decoder, crit, trainData, testData)
+enc, dec, enc_tr_loss, dec_tr_loss, test_loss= alternateMin(opt, encoder, decoder, crit, trainData, testData)
 
 saveAll()
-
-
