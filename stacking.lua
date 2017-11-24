@@ -14,14 +14,14 @@ exp = 'experiments'
 
 opt = 
 {
-	epochs = 20,
-	n_finetune = 1,
+	epochs = 40,
+	n_finetune = 0,
 
 	batch_size = 500,
 	print_every = 10,  
 	train_size = 60000,
 	test_size = 10000,
-	sizes = {1024, 500, 250}, --Sizes of inputs in various layers.
+	sizes = {1024, 500, 200}, --Sizes of inputs in various layers.
 	channels = 1,
 
 	learningRate = 1.0e-3, --SET PROPERLY
@@ -362,7 +362,7 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 		end
 
 		-- Finetune
-		if opt.n_finetune > 0 then 
+		-- if opt.n_finetune > 0 then 
 			for ep = 1, opt.epochs do 
 				models, loss_enc, loss_dec = finetune(opt, trainDs, trainDs:clone(), models, criterion, iter,testDs)
 
@@ -373,7 +373,7 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 				iter = iter + 1		
 				print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
 			end		
-		end
+		-- end
 	end
 	return models, encoder_train_loss, decoder_train_loss, test_losses
 end
@@ -477,7 +477,11 @@ for i = 1, opt.k - 1 do
 	if activation == 'relu' then 
 		e:add(nn.LeakyReLU())
 	else 
-		e:add(nn.Sigmoid())
+		if activation == 'tanh' then 
+			e:add(nn.Tanh())
+		else 
+			e:add(nn.Sigmoid())
+		end
 	end
 	if arg[1] then
 		wts = torch.load(dir_name..string.format('/encoder_weights_%d.dat', i))
@@ -497,7 +501,11 @@ for i = opt.k, 2, - 1 do
 	if activation == 'relu' then 
 		d:add(nn.LeakyReLU())
 	else 
-		d:add(nn.Sigmoid())
+		if activation == 'tanh' then 
+			d:add(nn.Tanh())
+		else 
+			d:add(nn.Sigmoid())
+		end
 	end
 	if arg[1] then
 		wts = torch.load(dir_name..string.format('/decoder_weights_%d.dat', i))
@@ -514,7 +522,11 @@ for i = 1, opt.n_finetune do
 	if activation == 'relu' then 
 		l:add(nn.LeakyReLU())
 	else 
-		l:add(nn.Sigmoid())
+		if activation == 'tanh' then 
+			d:add(nn.Tanh())
+		else 
+			d:add(nn.Sigmoid())
+		end
 	end
 	lnks[#lnks + 1] = l
 end

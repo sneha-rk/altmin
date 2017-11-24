@@ -14,13 +14,13 @@ exp = 'experiments'
 
 opt = 
 {
-	epochs = 40,
-	n_finetune = 1,
+	epochs = 80,
+	n_finetune = 0,
 	batch_size = 500,
 	print_every = 10,  
 	train_size = 60000,
 	test_size = 10000,
-	sizes = {1024, 500, 250}, --Sizes of inputs in various layers.
+	sizes = {1024, 500, 200}, --Sizes of inputs in various layers.
 	learningRate = 1.0e-3, --SET PROPERLY
 	channels = 1,
 	n = 2
@@ -347,7 +347,7 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 		end
 
 		-- Finetune
-		if opt.n_finetune > 0 then
+		-- if opt.n_finetune > 0 then
 			for ep = 1, opt.epochs / 2 do 
 				models, loss_enc, loss_dec = finetune(opt, trainDs, trainDs:clone(), models, criterion, iter,testDs)
 
@@ -356,12 +356,10 @@ function alternateMin(opt, models, criterion, trainDs, testDs)
 				--Test
 				local t, test_loss = test(testDs, models, criterion, iter, 1)
 				test_losses[#test_losses + 1] = test_loss:sum()
-
-				iter = iter + 1		
 				-- print(string.format("Epoch %4d, test loss = %1.6f", iter, torch.mean(test_loss)))
 				print(string.format("%d, %1.6f", iter, torch.mean(test_loss)))
 			end
-		end
+		-- end
 	end
 	return models, encoder_train_loss, decoder_train_loss, test_losses
 end
