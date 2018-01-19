@@ -41,7 +41,7 @@ opt =
 * wget
 
 ### How To run ###
-	th train-autoencoder.lua
+	th stacking.lua or stacking-control.lua
 
 ### Contents ###
 1. mnist.t7 : Contains MNIST Dataset. Do not touch!
@@ -52,8 +52,8 @@ opt =
 
 ### Who do I talk to? ###
 
-* Purushottam Kar
-* Surya Teja Chavali 
 * Sneha Reddy Kudugunta
+* Surya Teja Chavali 
 * Adepu Ravi Sankar
 * Vineeth Balasubramanian
+* Purushottam Kar
